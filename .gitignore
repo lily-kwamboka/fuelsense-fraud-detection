@@ -1,4 +1,22 @@
-node_modules/
-node_modules/
+# Environment variables
 .env
-fuelsense/
+.env.local
+
+# Node modules
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Logs
+*.log
+atg-raw.log
+
+# Build output
+frontend/build/
+
+# PM2
+.pm2/
+
+# OS files
+.DS_Store
+Thumbs.db
