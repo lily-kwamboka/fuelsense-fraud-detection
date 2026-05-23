@@ -18,14 +18,12 @@
  *   const { calculateNSV } = require('./measurement-engine');
  */
 
+require('dotenv').config();
+
 const { Pool } = require('pg');
 
 const db = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    database: process.env.DB_NAME || 'fuelsense',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || '2019',
+    connectionString: process.env.DATABASE_URL,
 });
 
 // ---------------------------------------------------------------------------
@@ -40,14 +38,11 @@ const VCF_CONSTANTS = {
 
 // ---------------------------------------------------------------------------
 // In-memory strapping table cache
-// Avoids hitting the DB on every reading (readings come every 60s per tank).
-// Cache is keyed by tankId. Cleared on process restart.
 // ---------------------------------------------------------------------------
 const strappingCache = {};
 
 /**
  * Load and cache the full strapping table for a tank.
- * Returns an array of { depth_mm, volume_litres } sorted by depth ascending.
  */
 async function loadStrappingTable(tankId) {
     if (strappingCache[tankId]) return strappingCache[tankId];
@@ -71,8 +66,6 @@ async function loadStrappingTable(tankId) {
 
 // ---------------------------------------------------------------------------
 // Function 1: lookupStrappingTable
-// Takes a tank ID and depth in mm. Returns volume in litres.
-// Uses linear interpolation for fractional mm values.
 // ---------------------------------------------------------------------------
 async function lookupStrappingTable(tankId, depthMm) {
     if (depthMm < 0) depthMm = 0;
@@ -83,7 +76,6 @@ async function lookupStrappingTable(tankId, depthMm) {
     const ceilMm = Math.ceil(depthMm);
     const fraction = depthMm - floorMm;
 
-    // Find floor row
     const floorRow = table.find(r => r.depth_mm === floorMm);
     if (!floorRow) {
         throw new Error(
@@ -91,12 +83,10 @@ async function lookupStrappingTable(tankId, depthMm) {
         );
     }
 
-    // No interpolation needed for whole mm values
     if (fraction === 0 || floorMm === ceilMm) {
         return parseFloat(floorRow.volume_litres);
     }
 
-    // Find ceiling row for interpolation
     const ceilRow = table.find(r => r.depth_mm === ceilMm);
     if (!ceilRow) {
         return parseFloat(floorRow.volume_litres);
@@ -105,15 +95,12 @@ async function lookupStrappingTable(tankId, depthMm) {
     const floorVol = parseFloat(floorRow.volume_litres);
     const ceilVol = parseFloat(ceilRow.volume_litres);
 
-    // Linear interpolation: V = V_floor + fraction * (V_ceil - V_floor)
     const interpolated = floorVol + fraction * (ceilVol - floorVol);
     return +interpolated.toFixed(3);
 }
 
 // ---------------------------------------------------------------------------
 // Function 2: calculateTOVandWater
-// Takes tank ID, fuel surface depth, and water depth.
-// Returns TOV, water volume, and GOV in litres.
 // ---------------------------------------------------------------------------
 async function calculateTOVandWater(tankId, innageMm, waterMm) {
     const tov_litres = await lookupStrappingTable(tankId, innageMm);
@@ -125,12 +112,6 @@ async function calculateTOVandWater(tankId, innageMm, waterMm) {
 
 // ---------------------------------------------------------------------------
 // Function 3: calculateVCF
-// ASTM D1250 temperature correction factor.
-// Converts observed volume to standard volume at 15C.
-//
-// Validation:
-//   At 15C exactly -> VCF must equal 1.0
-//   At 25C, density 0.740 (petrol) -> VCF ~= 0.992
 // ---------------------------------------------------------------------------
 function calculateVCF(temperatureC, densityAt15C, fuelType = 'petrol') {
     const constants = VCF_CONSTANTS[fuelType] || VCF_CONSTANTS.petrol;
@@ -139,7 +120,6 @@ function calculateVCF(temperatureC, densityAt15C, fuelType = 'petrol') {
     const alpha = K0 / (densityAt15C * densityAt15C) + K1 / densityAt15C;
     const deltaT = temperatureC - 15.0;
 
-    // At exactly 15C, deltaT = 0, exp(0) = 1.0
     const vcf = Math.exp(-alpha * deltaT * (1 + 0.8 * alpha * deltaT));
 
     return +vcf.toFixed(6);
@@ -147,11 +127,8 @@ function calculateVCF(temperatureC, densityAt15C, fuelType = 'petrol') {
 
 // ---------------------------------------------------------------------------
 // Function 4: calculateNSV
-// Full chain: raw probe inputs -> complete volume object.
-// This is the function the ingestion scheduler calls.
 // ---------------------------------------------------------------------------
 async function calculateNSV(tankId, innageMm, waterMm, temperatureC) {
-    // Get fuel density and type from DB
     const tankResult = await db.query(
         'SELECT fuel_type, fuel_density_at_15c FROM tanks WHERE id = $1',
         [tankId]
@@ -164,15 +141,11 @@ async function calculateNSV(tankId, innageMm, waterMm, temperatureC) {
     const { fuel_type, fuel_density_at_15c } = tankResult.rows[0];
     const density = parseFloat(fuel_density_at_15c);
 
-    // Step 1: TOV, water, GOV from strapping table
     const { tov_litres, water_litres, gov_litres } = await calculateTOVandWater(
         tankId, innageMm, waterMm
     );
 
-    // Step 2: VCF from temperature and density
     const vcf = calculateVCF(temperatureC, density, fuel_type);
-
-    // Step 3: NSV = GOV * VCF
     const nsv_litres = +(gov_litres * vcf).toFixed(3);
 
     return {
@@ -222,10 +195,8 @@ if (require.main === module) {
             }
         }
 
-        // --- VCF unit tests (no DB needed) ---
         console.log('--- VCF Tests ---');
 
-        // At exactly 15C, VCF must be exactly 1.0
         assert(
             'VCF = 1.0 at exactly 15C (petrol, density 0.740)',
             calculateVCF(15.0, 0.740, 'petrol'),
@@ -233,7 +204,6 @@ if (require.main === module) {
             0.000001
         );
 
-        // At 25C, petrol density 0.740 -> ~0.989 (roadmap states ~0.992 as approximate)
         assert(
             'VCF ~= 0.989 at 25C (petrol, density 0.740)',
             calculateVCF(25.0, 0.740, 'petrol'),
@@ -241,7 +211,6 @@ if (require.main === module) {
             0.001
         );
 
-        // At 15C, diesel must also be 1.0
         assert(
             'VCF = 1.0 at exactly 15C (diesel, density 0.835)',
             calculateVCF(15.0, 0.835, 'diesel'),
@@ -249,7 +218,6 @@ if (require.main === module) {
             0.000001
         );
 
-        // Below 15C, VCF should be > 1.0 (fuel expands when warmer than standard)
         const vcfCold = calculateVCF(5.0, 0.740, 'petrol');
         assert(
             'VCF > 1.0 when temp < 15C',
@@ -259,35 +227,26 @@ if (require.main === module) {
         );
 
         console.log('');
-
-        // --- Strapping table + NSV tests (DB needed) ---
         console.log('--- Strapping Table & NSV Tests ---');
 
         const tank1Id = 'b0000000-0000-0000-0000-000000000001';
 
         try {
-            // At depth 0, volume must be 0
             const vol0 = await lookupStrappingTable(tank1Id, 0);
             assert('Volume at 0mm = 0L', vol0, 0, 0.01);
 
-            // At depth 1000mm (half the 2000mm tank), volume should be ~7854L
-            // (half of pi * R^2 * L = pi * 1000^2 * 5000 / 1e6 = 15708L)
             const vol1000 = await lookupStrappingTable(tank1Id, 1000);
             assert('Volume at 1000mm ~= 7854L (half tank)', vol1000, 7853.982, 1.0);
 
-            // At full depth 2000mm, volume should be ~15708L
             const vol2000 = await lookupStrappingTable(tank1Id, 2000);
             assert('Volume at 2000mm ~= 15708L (full tank)', vol2000, 15707.963, 1.0);
 
-            // Interpolation test: 500.5mm should be between 500mm and 501mm
             const vol500 = await lookupStrappingTable(tank1Id, 500);
             const vol501 = await lookupStrappingTable(tank1Id, 501);
             const vol500_5 = await lookupStrappingTable(tank1Id, 500.5);
             const midpoint = (vol500 + vol501) / 2;
             assert('Linear interpolation at 500.5mm', vol500_5, midpoint, 0.01);
 
-            // Full NSV calculation for tank 1
-            // innage=1450mm, water=12mm, temp=18.5C
             console.log('');
             console.log('--- Full NSV Calculation (Tank 1) ---');
             const result = await calculateNSV(tank1Id, 1450, 12, 18.5);

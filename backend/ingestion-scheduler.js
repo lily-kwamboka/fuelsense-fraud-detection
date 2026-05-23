@@ -13,8 +13,10 @@
  *   node ingestion-scheduler.js
  *
  * Requires:
- *   npm install pg
+ *   npm install pg dotenv
  */
+
+require('dotenv').config();
 
 const { getInventory } = require('./atg-client');
 const { calculateNSV } = require('./measurement-engine');
@@ -25,20 +27,16 @@ const { calculateNSV } = require('./measurement-engine');
 const { Pool } = require('pg');
 
 const db = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    database: process.env.DB_NAME || 'fuelsense',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || '2019',
+    connectionString: process.env.DATABASE_URL,
 });
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const POLL_INTERVAL_MS = 60_000;  // 60 seconds
-const DELIVERY_RISE_THRESHOLD = 50;      // mm rise per cycle = delivery in progress
-const STABLE_CYCLES_REQUIRED = 10;      // 10 x 60s = 10 min stable = offload ended
-const READING_GAP_ALERT_MS = 5 * 60_000; // alert if no reading for 5 min
+const POLL_INTERVAL_MS = 60_000;
+const DELIVERY_RISE_THRESHOLD = 50;
+const STABLE_CYCLES_REQUIRED = 10;
+const READING_GAP_ALERT_MS = 5 * 60_000;
 
 // ---------------------------------------------------------------------------
 // In-memory state for delivery detection
@@ -50,9 +48,6 @@ const tankState = {};
 // Database helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Look up a tank record by ATG probe number.
- */
 async function getTankByProbeNumber(probeNumber) {
     const result = await db.query(
         'SELECT * FROM tanks WHERE tank_number = $1 LIMIT 1',
@@ -61,9 +56,6 @@ async function getTankByProbeNumber(probeNumber) {
     return result.rows[0] || null;
 }
 
-/**
- * Write one row to atg_readings.
- */
 async function insertReading(tankId, reading, volumes) {
     const sql = `
     INSERT INTO atg_readings (
@@ -94,9 +86,6 @@ async function insertReading(tankId, reading, volumes) {
     return result.rows[0].id;
 }
 
-/**
- * Create a new delivery record with status = in_progress.
- */
 async function createDelivery(tankId) {
     const sql = `
     INSERT INTO deliveries (
@@ -110,9 +99,6 @@ async function createDelivery(tankId) {
     return result.rows[0].id;
 }
 
-/**
- * Update delivery offload_ended_at when level stabilises.
- */
 async function markOffloadEnded(deliveryId) {
     await db.query(
         `UPDATE deliveries
@@ -141,7 +127,6 @@ async function runDeliveryDetection(tankId, currentInnageMm, readingId) {
     const state = tankState[tankId];
     const delta = currentInnageMm - state.lastInnageMm;
 
-    // Level is rising: delivery in progress
     if (delta > DELIVERY_RISE_THRESHOLD) {
         state.stableCycles = 0;
 
@@ -163,7 +148,6 @@ async function runDeliveryDetection(tankId, currentInnageMm, readingId) {
             );
         }
 
-        // Level was rising but now stable: offload ended
     } else if (state.deliveryStatus === 'in_progress') {
         state.stableCycles++;
         console.log(
@@ -225,7 +209,6 @@ async function runPollCycle() {
     }
 
     for (const reading of readings) {
-        // 1. Look up tank in DB
         let tank;
         try {
             tank = await getTankByProbeNumber(reading.tankNumber);
@@ -239,7 +222,6 @@ async function runPollCycle() {
             continue;
         }
 
-        // 2. Calculate volumes using real measurement engine
         let volumes;
         try {
             volumes = await calculateNSV(
@@ -253,7 +235,6 @@ async function runPollCycle() {
             continue;
         }
 
-        // 3. Write reading to DB
         let readingId;
         try {
             readingId = await insertReading(tank.id, reading, volumes);
@@ -272,10 +253,8 @@ async function runPollCycle() {
             continue;
         }
 
-        // 4. High water alert
         if (reading.waterMm > 50) sendHighWaterAlert(tank.id, reading.waterMm);
 
-        // 5. Delivery detection
         try {
             await runDeliveryDetection(tank.id, reading.innageMm, readingId);
         } catch (err) {
@@ -296,7 +275,7 @@ async function start() {
     console.log('================================================');
     console.log('  FuelSense Ingestion Scheduler');
     console.log('  Poll interval: ' + (POLL_INTERVAL_MS / 1000) + 's');
-    console.log('  DB: ' + (process.env.DB_HOST || 'localhost') + '/' + (process.env.DB_NAME || 'fuelsense'));
+    console.log('  DB: ' + process.env.DATABASE_URL);
     console.log('================================================');
     console.log('');
 

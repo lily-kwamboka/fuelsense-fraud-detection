@@ -101,11 +101,48 @@ app.get('/api/deliveries', async (req, res) => {
          t.fuel_type
        FROM deliveries d
        JOIN tanks t ON t.id = d.tank_id
-       ORDER BY d.created_at DESC
+       ORDER BY d.truck_arrived_at DESC
        LIMIT 20`
     );
     res.json(result.rows);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/deliveries/:id ─────────────────────────────────
+// Returns full delivery detail with opening/closing readings
+app.get('/api/deliveries/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT
+         d.*,
+         t.tank_number,
+         t.fuel_type,
+         o.innage_mm        AS opening_innage_mm,
+         o.temperature_c    AS opening_temp,
+         o.nsv_litres       AS opening_nsv,
+         o.recorded_at      AS opening_recorded_at,
+         c.innage_mm        AS closing_innage_mm,
+         c.temperature_c    AS closing_temp,
+         c.nsv_litres       AS closing_nsv,
+         c.recorded_at      AS closing_recorded_at
+       FROM deliveries d
+       JOIN tanks t             ON t.id = d.tank_id
+       LEFT JOIN atg_readings o ON o.id = d.opening_reading_id
+       LEFT JOIN atg_readings c ON c.id = d.closing_reading_id
+       WHERE d.id = $1`,
+      [req.params.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Delivery not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] GET /api/deliveries/:id error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -122,7 +159,6 @@ app.post('/api/deliveries', async (req, res) => {
   try {
     const client = await getDb();
 
-    // Get the latest reading to use as opening reading
     const readingRes = await client.query(
       `SELECT id, nsv_litres FROM atg_readings
         WHERE tank_id = $1
@@ -137,13 +173,11 @@ app.post('/api/deliveries', async (req, res) => {
 
     const openingReading = readingRes.rows[0];
 
-    // Lock the opening reading
     await client.query(
       'UPDATE atg_readings SET is_locked = TRUE WHERE id = $1',
       [openingReading.id]
     );
 
-    // Create the delivery record
     const now = new Date();
     const delRes = await client.query(
       `INSERT INTO deliveries
@@ -156,9 +190,9 @@ app.post('/api/deliveries', async (req, res) => {
 
     console.log('[API] Delivery created:', delRes.rows[0].id);
     res.status(201).json({
-      delivery_id:    delRes.rows[0].id,
-      opening_nsv:    openingReading.nsv_litres,
-      message:        'Delivery created. Opening reading locked.',
+      delivery_id:  delRes.rows[0].id,
+      opening_nsv:  openingReading.nsv_litres,
+      message:      'Delivery created. Opening reading locked.',
     });
   } catch (err) {
     console.error('[API] POST /api/deliveries error:', err.message);
@@ -167,7 +201,7 @@ app.post('/api/deliveries', async (req, res) => {
 });
 
 // ── GET /api/reconciliation ─────────────────────────────────
-// Returns last 30 days of daily reconciliation
+// Returns last 60 daily reconciliation rows across all tanks
 app.get('/api/reconciliation', async (req, res) => {
   try {
     const client = await getDb();
@@ -205,7 +239,6 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
   try {
     const client = await getDb();
 
-    // Get opening and closing NSV for this date
     const openRes = await client.query(
       `SELECT nsv_litres FROM atg_readings
         WHERE tank_id = $1 AND recorded_at::date = $2::date
@@ -224,9 +257,10 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
       return res.status(400).json({ error: 'No readings found for this tank on this date' });
     }
 
-    const openingNSV        = parseFloat(openRes.rows[0].nsv_litres);
-    const closingNSV        = parseFloat(closeRes.rows[0].nsv_litres);
-    const delivRes          = await client.query(
+    const openingNSV  = parseFloat(openRes.rows[0].nsv_litres);
+    const closingNSV  = parseFloat(closeRes.rows[0].nsv_litres);
+
+    const delivRes = await client.query(
       `SELECT COALESCE(SUM(received_nsv_litres), 0) AS total
          FROM deliveries
         WHERE tank_id = $1
@@ -235,10 +269,10 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
       [tank_id, recon_date]
     );
 
-    const deliveriesNSV     = parseFloat(delivRes.rows[0].total) || 0;
-    const sales             = parseFloat(pump_sales_litres);
+    const deliveriesNSV      = parseFloat(delivRes.rows[0].total) || 0;
+    const sales              = parseFloat(pump_sales_litres);
     const theoreticalClosing = openingNSV + deliveriesNSV - sales;
-    const varianceLitres    = closingNSV - theoreticalClosing;
+    const varianceLitres     = closingNSV - theoreticalClosing;
 
     await client.query(
       `INSERT INTO daily_reconciliation
@@ -260,7 +294,7 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     );
 
     res.json({
-      ok: true,
+      ok:                  true,
       opening_nsv:         openingNSV.toFixed(1),
       closing_nsv:         closingNSV.toFixed(1),
       deliveries_nsv:      deliveriesNSV.toFixed(1),
@@ -274,6 +308,7 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

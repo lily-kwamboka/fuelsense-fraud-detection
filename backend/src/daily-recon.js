@@ -62,8 +62,7 @@ async function reconTank (db, tank, date) {
 
   const deliveriesNSV = parseFloat(delivRes.rows[0].total) || 0;
 
-  // 4. Pump sales — for now this is 0 until POS integration is built in Phase 5
-  // Station managers can manually update this figure via the dashboard
+  // 4. Pump sales — manually updated via dashboard until POS integration in Phase 5
   const pumpSales = 0;
 
   // 5. Theoretical closing stock

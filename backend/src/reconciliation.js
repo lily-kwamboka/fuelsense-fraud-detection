@@ -10,9 +10,9 @@ async function reconcileDelivery (db, deliveryId) {
   // 1. Load the delivery record
   const delRes = await db.query(
     `SELECT d.*,
-            o.nsv_litres  AS opening_nsv,
+            o.nsv_litres    AS opening_nsv,
             o.temperature_c AS opening_temp,
-            c.nsv_litres  AS closing_nsv,
+            c.nsv_litres    AS closing_nsv,
             c.temperature_c AS closing_temp
        FROM deliveries d
        JOIN atg_readings o ON o.id = d.opening_reading_id
@@ -43,22 +43,22 @@ async function reconcileDelivery (db, deliveryId) {
   const pumpSales = parseFloat(salesRes.rows[0].total_sales) || 0;
 
   // 3. Calculate what the tank actually gained
-  const openingNSV    = parseFloat(delivery.opening_nsv);
-  const closingNSV    = parseFloat(delivery.closing_nsv);
-  const receivedNSV   = (closingNSV - openingNSV) + pumpSales;
+  const openingNSV  = parseFloat(delivery.opening_nsv);
+  const closingNSV  = parseFloat(delivery.closing_nsv);
+  const receivedNSV = (closingNSV - openingNSV) + pumpSales;
 
   // 4. Compare to BOL
-  const bolNSV        = parseFloat(delivery.bol_nsv_litres);
+  const bolNSV         = parseFloat(delivery.bol_nsv_litres);
   const varianceLitres = receivedNSV - bolNSV;
   const variancePct    = (varianceLitres / bolNSV) * 100;
   const tolerance      = parseFloat(delivery.tolerance_pct) || TOLERANCE_PCT;
 
   // 5. Evaporation model
-  const deliveredTemp  = parseFloat(delivery.opening_temp);
-  const tankTemp       = parseFloat(delivery.closing_temp);
-  const workingLoss    = (bolNSV * WORKING_LOSS_G_PER_LITRE) / 1000;
-  const tempLoss       = bolNSV * Math.abs(deliveredTemp - tankTemp) * TEMP_LOSS_FACTOR;
-  const expectedLoss   = workingLoss + tempLoss;
+  const deliveredTemp = parseFloat(delivery.opening_temp);
+  const tankTemp      = parseFloat(delivery.closing_temp);
+  const workingLoss   = (bolNSV * WORKING_LOSS_G_PER_LITRE) / 1000;
+  const tempLoss      = bolNSV * Math.abs(deliveredTemp - tankTemp) * TEMP_LOSS_FACTOR;
+  const expectedLoss  = workingLoss + tempLoss;
 
   // 6. Classify the variance
   let classification;
@@ -94,7 +94,7 @@ async function reconcileDelivery (db, deliveryId) {
   );
 
   console.log('--------------------------------------------');
-  console.log('[RECON] Delivery: ' + deliveryId);
+  console.log('[RECON] Delivery:       ' + deliveryId);
   console.log('[RECON] Opening NSV:    ' + openingNSV.toFixed(1) + 'L');
   console.log('[RECON] Closing NSV:    ' + closingNSV.toFixed(1) + 'L');
   console.log('[RECON] Pump sales:     ' + pumpSales.toFixed(1) + 'L');

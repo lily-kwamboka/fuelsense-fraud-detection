@@ -12,14 +12,12 @@
  * Do NOT run this against a production database.
  */
 
+require('dotenv').config();
+
 const { Pool } = require('pg');
 
 const db = new Pool({
-  host     : process.env.DB_HOST     || 'localhost',
-  port     : process.env.DB_PORT     || 5432,
-  database : process.env.DB_NAME     || 'fuelsense',
-  user     : process.env.DB_USER     || 'postgres',
-  password : process.env.DB_PASSWORD || '2019',
+    connectionString: process.env.DATABASE_URL,
 });
 
 // ---------------------------------------------------------------------------
@@ -144,159 +142,148 @@ CREATE TABLE daily_reconciliation (
 
 // ---------------------------------------------------------------------------
 // Synthetic strapping table generator
-// Horizontal cylindrical tank: radius R=1000mm, length L=5000mm
-// Volume at depth d: V(d) = L * (R^2 * acos((R-d)/R) - (R-d) * sqrt(2Rd - d^2))
-// Range: 0mm to 2000mm (full diameter), 1mm increments = 2001 rows per tank
 // ---------------------------------------------------------------------------
 function generateStrappingTable(tankId, radiusMm = 1000, lengthMm = 5000) {
-  const rows = [];
-  const R = radiusMm;
-  const L = lengthMm;
+    const rows = [];
+    const R = radiusMm;
+    const L = lengthMm;
 
-  for (let d = 0; d <= 2 * R; d++) {
-    let volumeMm3;
-    if (d <= 0) {
-      volumeMm3 = 0;
-    } else if (d >= 2 * R) {
-      volumeMm3 = Math.PI * R * R * L;
-    } else {
-      const term1 = R * R * Math.acos((R - d) / R);
-      const term2 = (R - d) * Math.sqrt(2 * R * d - d * d);
-      volumeMm3 = L * (term1 - term2);
+    for (let d = 0; d <= 2 * R; d++) {
+        let volumeMm3;
+        if (d <= 0) {
+            volumeMm3 = 0;
+        } else if (d >= 2 * R) {
+            volumeMm3 = Math.PI * R * R * L;
+        } else {
+            const term1 = R * R * Math.acos((R - d) / R);
+            const term2 = (R - d) * Math.sqrt(2 * R * d - d * d);
+            volumeMm3 = L * (term1 - term2);
+        }
+        const volumeLitres = volumeMm3 / 1_000_000;
+        rows.push({ tankId, depthMm: d, volumeLitres: +volumeLitres.toFixed(3) });
     }
-    // Convert mm^3 to litres (1L = 1,000,000 mm^3)
-    const volumeLitres = volumeMm3 / 1_000_000;
-    rows.push({ tankId, depthMm: d, volumeLitres: +volumeLitres.toFixed(3) });
-  }
 
-  return rows;
+    return rows;
 }
 
 // ---------------------------------------------------------------------------
 // Seed data
 // ---------------------------------------------------------------------------
 async function seed(stationId, tank1Id, tank2Id) {
-  // Station
-  await db.query(
-    `INSERT INTO stations (id, name, location, timezone)
+    await db.query(
+        `INSERT INTO stations (id, name, location, timezone)
      VALUES ($1, $2, $3, $4)`,
-    [stationId, 'FuelSense Dev Station', '1 Test Road, Dev City', 'Africa/Nairobi']
-  );
-  console.log('[setup] Station created:', stationId);
+        [stationId, 'FuelSense Dev Station', '1 Test Road, Dev City', 'Africa/Nairobi']
+    );
+    console.log('[setup] Station created:', stationId);
 
-  // Tank 1 - Petrol
-  await db.query(
-    `INSERT INTO tanks
+    await db.query(
+        `INSERT INTO tanks
        (id, station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, atg_probe_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [tank1Id, stationId, 1, 'petrol', 30000, 0.740, 'PROBE-001']
-  );
-  console.log('[setup] Tank 1 (Petrol) created:', tank1Id);
+        [tank1Id, stationId, 1, 'petrol', 30000, 0.740, 'PROBE-001']
+    );
+    console.log('[setup] Tank 1 (Petrol) created:', tank1Id);
 
-  // Tank 2 - Diesel
-  await db.query(
-    `INSERT INTO tanks
+    await db.query(
+        `INSERT INTO tanks
        (id, station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, atg_probe_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [tank2Id, stationId, 2, 'diesel', 30000, 0.835, 'PROBE-002']
-  );
-  console.log('[setup] Tank 2 (Diesel) created:', tank2Id);
+        [tank2Id, stationId, 2, 'diesel', 30000, 0.835, 'PROBE-002']
+    );
+    console.log('[setup] Tank 2 (Diesel) created:', tank2Id);
 
-  // Strapping tables
-  console.log('[setup] Generating strapping table for Tank 1 (2001 rows)...');
-  const tank1Strapping = generateStrappingTable(tank1Id);
+    console.log('[setup] Generating strapping table for Tank 1 (2001 rows)...');
+    const tank1Strapping = generateStrappingTable(tank1Id);
 
-  console.log('[setup] Generating strapping table for Tank 2 (2001 rows)...');
-  const tank2Strapping = generateStrappingTable(tank2Id);
+    console.log('[setup] Generating strapping table for Tank 2 (2001 rows)...');
+    const tank2Strapping = generateStrappingTable(tank2Id);
 
-  // Bulk insert strapping entries in batches of 500
-  async function bulkInsertStrapping(rows) {
-    const batchSize = 500;
-    for (let i = 0; i < rows.length; i += batchSize) {
-      const batch = rows.slice(i, i + batchSize);
-      const values = batch.map((r, idx) => {
-        const base = idx * 3;
-        return `($${base + 1}, $${base + 2}, $${base + 3})`;
-      }).join(', ');
-      const params = batch.flatMap(r => [r.tankId, r.depthMm, r.volumeLitres]);
-      await db.query(
-        `INSERT INTO strapping_table_entries (tank_id, depth_mm, volume_litres)
+    async function bulkInsertStrapping(rows) {
+        const batchSize = 500;
+        for (let i = 0; i < rows.length; i += batchSize) {
+            const batch = rows.slice(i, i + batchSize);
+            const values = batch.map((r, idx) => {
+                const base = idx * 3;
+                return `($${base + 1}, $${base + 2}, $${base + 3})`;
+            }).join(', ');
+            const params = batch.flatMap(r => [r.tankId, r.depthMm, r.volumeLitres]);
+            await db.query(
+                `INSERT INTO strapping_table_entries (tank_id, depth_mm, volume_litres)
          VALUES ${values}
          ON CONFLICT (tank_id, depth_mm) DO NOTHING`,
-        params
-      );
-      process.stdout.write('.');
+                params
+            );
+            process.stdout.write('.');
+        }
+        process.stdout.write('\n');
     }
-    process.stdout.write('\n');
-  }
 
-  await bulkInsertStrapping(tank1Strapping);
-  console.log('[setup] Tank 1 strapping table inserted (' + tank1Strapping.length + ' rows)');
+    await bulkInsertStrapping(tank1Strapping);
+    console.log('[setup] Tank 1 strapping table inserted (' + tank1Strapping.length + ' rows)');
 
-  await bulkInsertStrapping(tank2Strapping);
-  console.log('[setup] Tank 2 strapping table inserted (' + tank2Strapping.length + ' rows)');
+    await bulkInsertStrapping(tank2Strapping);
+    console.log('[setup] Tank 2 strapping table inserted (' + tank2Strapping.length + ' rows)');
 
-  // Quick verification query
-  const check = await db.query(
-    `SELECT depth_mm, volume_litres
+    const check = await db.query(
+        `SELECT depth_mm, volume_litres
      FROM strapping_table_entries
      WHERE tank_id = $1 AND depth_mm IN (0, 500, 1000, 1500, 2000)
      ORDER BY depth_mm`,
-    [tank1Id]
-  );
-  console.log('');
-  console.log('[setup] Strapping table spot check (Tank 1):');
-  console.log('  depth_mm | volume_litres');
-  console.log('  ---------|---------------');
-  for (const row of check.rows) {
-    console.log('  ' + String(row.depth_mm).padStart(8) + ' | ' + row.volume_litres);
-  }
+        [tank1Id]
+    );
+    console.log('');
+    console.log('[setup] Strapping table spot check (Tank 1):');
+    console.log('  depth_mm | volume_litres');
+    console.log('  ---------|---------------');
+    for (const row of check.rows) {
+        console.log('  ' + String(row.depth_mm).padStart(8) + ' | ' + row.volume_litres);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 (async () => {
-  console.log('');
-  console.log('================================================');
-  console.log('  FuelSense Database Setup');
-  console.log('  DB: ' + (process.env.DB_HOST || 'localhost') + '/' + (process.env.DB_NAME || 'fuelsense'));
-  console.log('================================================');
-  console.log('');
-
-  try {
-    await db.query('SELECT 1');
-    console.log('[setup] Database connection OK');
-  } catch (err) {
-    console.error('[setup] Cannot connect to database:', err.message);
-    process.exit(1);
-  }
-
-  try {
-    console.log('[setup] Creating schema...');
-    await db.query(SCHEMA);
-    console.log('[setup] Schema created (6 tables)');
-    console.log('');
-
-    // Use fixed UUIDs for dev so you can rerun without losing references
-    const stationId = 'a0000000-0000-0000-0000-000000000001';
-    const tank1Id   = 'b0000000-0000-0000-0000-000000000001';
-    const tank2Id   = 'b0000000-0000-0000-0000-000000000002';
-
-    console.log('[setup] Seeding data...');
-    await seed(stationId, tank1Id, tank2Id);
-
     console.log('');
     console.log('================================================');
-    console.log('  Setup complete. Ready to run:');
-    console.log('  node ingestion-scheduler.js');
+    console.log('  FuelSense Database Setup');
+    console.log('  DB: ' + process.env.DATABASE_URL);
     console.log('================================================');
     console.log('');
-  } catch (err) {
-    console.error('[setup] Setup failed:', err.message);
-    console.error(err.stack);
-    process.exit(1);
-  } finally {
-    await db.end();
-  }
+
+    try {
+        await db.query('SELECT 1');
+        console.log('[setup] Database connection OK');
+    } catch (err) {
+        console.error('[setup] Cannot connect to database:', err.message);
+        process.exit(1);
+    }
+
+    try {
+        console.log('[setup] Creating schema...');
+        await db.query(SCHEMA);
+        console.log('[setup] Schema created (6 tables)');
+        console.log('');
+
+        const stationId = 'a0000000-0000-0000-0000-000000000001';
+        const tank1Id   = 'b0000000-0000-0000-0000-000000000001';
+        const tank2Id   = 'b0000000-0000-0000-0000-000000000002';
+
+        console.log('[setup] Seeding data...');
+        await seed(stationId, tank1Id, tank2Id);
+
+        console.log('');
+        console.log('================================================');
+        console.log('  Setup complete. Ready to run:');
+        console.log('  node ingestion-scheduler.js');
+        console.log('================================================');
+        console.log('');
+    } catch (err) {
+        console.error('[setup] Setup failed:', err.message);
+        console.error(err.stack);
+        process.exit(1);
+    } finally {
+        await db.end();
+    }
 })();
