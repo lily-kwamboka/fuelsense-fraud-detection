@@ -6,6 +6,7 @@ import TankGauge from './components/TankGauge';
 import TankChart from './components/TankChart';
 import DeliveryForm from './components/DeliveryForm';
 import DeliveryList from './components/DeliveryList';
+import DeliveryTimeline from './components/DeliveryTimeline';
 import ReconciliationTable from './components/ReconciliationTable';
 import PumpSalesForm from './components/PumpSalesForm';
 
@@ -227,9 +228,37 @@ function App() {
                   api={API}
                 />
               )}
-              <DeliveryList deliveries={deliveries} />
+
+              {/* Active deliveries timeline */}
+              {deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
+                <div>
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px' }}>
+                    🔄 Active Deliveries
+                  </div>
+                  {deliveries
+                    .filter(d => !['confirmed', 'flagged'].includes(d.status))
+                    .map(d => (
+                      <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
+                    ))}
+                </div>
+              )}
+
+              {/* Completed deliveries */}
+              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px', marginTop: '24px' }}>
+                📋 Delivery History
+              </div>
+              {deliveries.filter(d => ['confirmed', 'flagged'].includes(d.status)).length > 0 ? (
+                deliveries
+                  .filter(d => ['confirmed', 'flagged'].includes(d.status))
+                  .map(d => (
+                    <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
+                  ))
+              ) : (
+                <DeliveryList deliveries={deliveries} />
+              )}
             </div>
           )}
+
 
           {/* ── RECONCILIATION ── */}
           {activeTab === 'reconciliation' && (
