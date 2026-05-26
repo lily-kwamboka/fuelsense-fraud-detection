@@ -12,6 +12,7 @@ import ReconciliationTable from './components/ReconciliationTable';
 import PumpSalesForm from './components/PumpSalesForm';
 import Reports from './components/Reports';
 import useIsMobile from './useIsMobile';
+import { useToast } from './Toast';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -26,6 +27,7 @@ function App() {
   const [showForm,       setShowForm]    = useState(false);
   const [darkMode,       setDarkMode]    = useState(false);
   const isMobile = useIsMobile();
+  const { addToast } = useToast();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -50,8 +52,37 @@ function App() {
       setDeliveries(d);
       setRecon(r);
       setLastUpdated(new Date().toLocaleTimeString());
+
+      // Alert for low stock
+      t.filter(tank => parseFloat(tank.fill_pct) < 20).forEach(tank => {
+        addToast(
+          `Tank ${tank.tank_number} (${tank.fuel_type.toUpperCase()}) is critically low — ${parseFloat(tank.fill_pct).toFixed(1)}% remaining`,
+          'warning',
+          6000
+        );
+      });
+
+      // Alert for high water
+      t.filter(tank => parseFloat(tank.water_mm) > 50).forEach(tank => {
+        addToast(
+          `Tank ${tank.tank_number} has high water level — ${tank.water_mm}mm. Inspect immediately.`,
+          'error',
+          6000
+        );
+      });
+
+      // Alert for flagged deliveries
+      d.filter(del => del.status === 'flagged').forEach(del => {
+        addToast(
+          `Delivery ${del.bol_number} is flagged — variance exceeds tolerance.`,
+          'error',
+          6000
+        );
+      });
+
     } catch (err) {
       console.error('Failed to load data:', err);
+      addToast('Failed to load data. Check your connection.', 'error', 5000);
     }
   }
 

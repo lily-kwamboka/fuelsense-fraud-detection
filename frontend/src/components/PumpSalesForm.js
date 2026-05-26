@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
+import { ToastContext } from '../Toast';
 
 function PumpSalesForm({ tanks, api, onSuccess }) {
   const [form, setForm] = useState({
@@ -9,6 +10,7 @@ function PumpSalesForm({ tanks, api, onSuccess }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
+  const { addToast } = useContext(ToastContext);
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -47,6 +49,11 @@ function PumpSalesForm({ tanks, api, onSuccess }) {
 
       setResult(data);
       setLoading(false);
+      addToast(
+        'Pump sales saved! Daily variance: ' + parseFloat(data.variance_litres).toFixed(0) + 'L',
+        Math.abs(parseFloat(data.variance_litres)) > 200 ? 'warning' : 'success',
+        5000
+      );
       if (onSuccess) onSuccess();
 
     } catch (err) {

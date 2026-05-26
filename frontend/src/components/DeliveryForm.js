@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
+import { ToastContext } from '../Toast';
 
 function DeliveryForm({ tanks, onSuccess, api }) {
   const [form, setForm] = useState({
@@ -9,6 +10,7 @@ function DeliveryForm({ tanks, onSuccess, api }) {
   });
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
+  const { addToast } = useContext(ToastContext);
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -43,13 +45,11 @@ function DeliveryForm({ tanks, onSuccess, api }) {
         return;
       }
 
-      alert(
-        'Delivery created successfully!\n\n' +
-        'Delivery ID: ' + data.delivery_id + '\n' +
-        'Opening NSV: ' + parseFloat(data.opening_nsv).toFixed(1) + 'L\n\n' +
-        'Opening reading has been locked.'
+      addToast(
+        'Delivery created! Opening NSV: ' + parseFloat(data.opening_nsv).toFixed(1) + 'L — reading locked.',
+        'success',
+        5000
       );
-
       onSuccess();
     } catch (err) {
       setError('Network error: ' + err.message);
