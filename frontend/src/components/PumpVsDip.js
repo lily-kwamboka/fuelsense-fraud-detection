@@ -42,7 +42,6 @@ export default function PumpVsDip({ darkMode }) {
 
   // Summary stats
   const flaggedCount  = data.filter(r => r.status === 'flagged').length;
-  const totalVariance = data.reduce((s, r) => s + (parseFloat(r.variance_litres) || 0), 0);
   const avgVariancePct = data.length
     ? data.reduce((s, r) => s + Math.abs(parseFloat(r.variance_pct) || 0), 0) / data.length
     : 0;
@@ -125,7 +124,7 @@ export default function PumpVsDip({ darkMode }) {
                     {h}
                   </th>
                 ))}
-              </tr>
+               </tr>
             </thead>
             <tbody>
               {filtered.map((row, i) => {

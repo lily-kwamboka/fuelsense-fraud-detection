@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -32,7 +32,7 @@ export default function AlertsPanel({ darkMode }) {
     bg:      darkMode ? '#0f0f1a' : '#f0f2f5',
   };
 
-  async function loadAlerts() {
+  const loadAlerts = useCallback(async () => {
     setLoading(true);
     try {
       const url = filter === 'all'
@@ -46,9 +46,11 @@ export default function AlertsPanel({ darkMode }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [filter]);
 
-  useEffect(() => { loadAlerts(); }, [filter]);
+  useEffect(() => {
+    loadAlerts();
+  }, [loadAlerts]);
 
   async function handleAcknowledge(alertId) {
     if (!ackName.trim()) {
