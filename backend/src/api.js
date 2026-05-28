@@ -6,7 +6,6 @@ const cors       = require('cors');
 const { Client } = require('pg');
 
 const app        = express();
-const app        = express();
 const PORT       = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
