@@ -73,29 +73,38 @@ function App() {
 
   async function loadData() {
     try {
-      const uid        = session?.user?.id || '';
-      const stationParam = activeStation ? '&station_id=' + activeStation : '';
+      const uid = session?.user?.id || '';
+      const stationParam = activeStation ? '?station_id=' + activeStation + '&uid=' + uid : '?uid=' + uid;
 
       const [t, d, r] = await Promise.all([
-        fetch(API + '/api/tanks?uid=' + uid + stationParam).then(r => r.json()),
-        fetch(API + '/api/deliveries?uid=' + uid + stationParam).then(r => r.json()),
-        fetch(API + '/api/reconciliation?uid=' + uid + stationParam).then(r => r.json()),
+        fetch(API + '/api/tanks' + stationParam).then(res => res.json()),
+        fetch(API + '/api/deliveries' + stationParam).then(res => res.json()),
+        fetch(API + '/api/reconciliation' + stationParam).then(res => res.json()),
       ]);
-      setTanks(t);
-      setDeliveries(d);
-      setRecon(r);
+      
+      setTanks(Array.isArray(t) ? t : []);
+      setDeliveries(Array.isArray(d) ? d : []);
+      setRecon(Array.isArray(r) ? r : []);
       setLastUpdated(new Date().toLocaleTimeString());
 
-      // Alerts
-      t.filter(tank => parseFloat(tank.fill_pct) < 20).forEach(tank => {
-        addToast(`Tank ${tank.tank_number} (${tank.fuel_type.toUpperCase()}) is critically low — ${parseFloat(tank.fill_pct).toFixed(1)}%`, 'warning', 6000);
-      });
-      t.filter(tank => parseFloat(tank.water_mm) > 50).forEach(tank => {
-        addToast(`Tank ${tank.tank_number} has high water — ${tank.water_mm}mm`, 'error', 6000);
-      });
-      d.filter(del => del.status === 'flagged').forEach(del => {
-        addToast(`Delivery ${del.bol_number} is flagged — variance exceeds tolerance.`, 'error', 6000);
-      });
+      // Alerts for low stock
+      if (Array.isArray(t)) {
+        t.filter(tank => parseFloat(tank.fill_pct) < 20).forEach(tank => {
+          addToast(`Tank ${tank.tank_number} (${tank.fuel_type?.toUpperCase() || 'Unknown'}) is critically low — ${parseFloat(tank.fill_pct).toFixed(1)}%`, 'warning', 6000);
+        });
+        
+        // Alerts for high water
+        t.filter(tank => parseFloat(tank.water_mm) > 50).forEach(tank => {
+          addToast(`Tank ${tank.tank_number} has high water — ${tank.water_mm}mm`, 'error', 6000);
+        });
+      }
+      
+      // Alerts for flagged deliveries
+      if (Array.isArray(d)) {
+        d.filter(del => del.status === 'flagged').forEach(del => {
+          addToast(`Delivery ${del.bol_number} is flagged — variance exceeds tolerance.`, 'error', 6000);
+        });
+      }
 
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -253,12 +262,12 @@ function App() {
           {/* ── DASHBOARD ── */}
           {activeTab === 'dashboard' && (
             <div>
-              {tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
+              {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
                 <div key={t.id} style={styles.alertRed}>
                   🚨 <strong>Tank {t.tank_number}</strong> critically low — {parseFloat(t.fill_pct).toFixed(1)}%
                 </div>
               ))}
-              {tanks.filter(t => parseFloat(t.water_mm) > 50).map(t => (
+              {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.water_mm) > 50).map(t => (
                 <div key={t.id} style={styles.alertAmber}>
                   ⚠️ <strong>Tank {t.tank_number}</strong> high water — {t.water_mm}mm
                 </div>
@@ -271,10 +280,10 @@ function App() {
                 gap: isMobile ? '8px' : '16px',
                 marginBottom: '24px',
               }}>
-                <SummaryCard label="Total NSV"       value={tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Active Tanks"    value={tanks.length + ' tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Total NSV"       value={Array.isArray(tanks) ? tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L' : '0 L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Active Tanks"    value={Array.isArray(tanks) ? tanks.length + ' tanks' : '0 tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
                 <SummaryCard label="Deliveries"      value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Avg Temp"        value={tanks.length ? (tanks.reduce((s, t) => s + parseFloat(t.temperature_c || 0), 0) / tanks.length).toFixed(1) + ' °C' : '—'} icon="🌡" color="#e74c3c" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Avg Temp"        value={Array.isArray(tanks) && tanks.length ? (tanks.reduce((s, t) => s + parseFloat(t.temperature_c || 0), 0) / tanks.length).toFixed(1) + ' °C' : '—'} icon="🌡" color="#e74c3c" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
               </div>
 
               {/* Tank gauges */}
@@ -286,13 +295,13 @@ function App() {
                 gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
                 gap: '16px',
               }}>
-                {tanks.map(tank => (
+                {Array.isArray(tanks) && tanks.map(tank => (
                   <TankGauge key={tank.id} tank={tank} darkMode={darkMode} />
                 ))}
               </div>
 
               {/* Charts */}
-              {!isMobile && (
+              {!isMobile && Array.isArray(tanks) && tanks.length > 0 && (
                 <>
                   <div style={{ ...styles.sectionHeader, marginTop: '24px' }}>
                     <div style={{ ...styles.sectionTitle, color: colors.text }}>NSV Trends — Last Hour</div>
@@ -325,7 +334,7 @@ function App() {
                 />
               )}
 
-              {deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
+              {Array.isArray(deliveries) && deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
                 <div>
                   <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px' }}>
                     🔄 Active Deliveries
@@ -341,7 +350,7 @@ function App() {
               <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px', marginTop: '24px' }}>
                 📋 Delivery History
               </div>
-              {deliveries.filter(d => ['confirmed', 'flagged'].includes(d.status)).length > 0 ? (
+              {Array.isArray(deliveries) && deliveries.filter(d => ['confirmed', 'flagged'].includes(d.status)).length > 0 ? (
                 deliveries
                   .filter(d => ['confirmed', 'flagged'].includes(d.status))
                   .map(d => (
