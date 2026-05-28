@@ -135,8 +135,10 @@ function App() {
   }, [session, activeStation]);
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
-    window.location.href = '/';
+    await supabase.auth.signOut({ scope: 'global' });
+    localStorage.clear();
+    sessionStorage.clear();
+    window.location.replace('/');
   }
 
   const colors = {
