@@ -176,7 +176,7 @@ app.get('/api/deliveries', async (req, res) => {
          t.fuel_type
        FROM deliveries d
        JOIN tanks t ON t.id = d.tank_id
-       ORDER BY d.created_at DESC
+       ORDER BY d.bol_entered_at DESC
        LIMIT 20`
     );
     res.json(result.rows);
@@ -349,6 +349,7 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
