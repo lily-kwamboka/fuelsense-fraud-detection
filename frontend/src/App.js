@@ -127,6 +127,7 @@ function App() {
 
   async function handleSignOut() {
     await supabase.auth.signOut();
+    window.location.href = '/';
   }
 
   const colors = {
