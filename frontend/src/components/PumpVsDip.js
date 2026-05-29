@@ -34,14 +34,14 @@ export default function PumpVsDip({ darkMode }) {
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, []);
 
   const filtered = filter === 'all'
     ? data
     : data.filter(r => r.status === filter);
 
-  // Summary stats
-  const flaggedCount  = data.filter(r => r.status === 'flagged').length;
+  const flaggedCount   = data.filter(r => r.status === 'flagged').length;
   const avgVariancePct = data.length
     ? data.reduce((s, r) => s + Math.abs(parseFloat(r.variance_pct) || 0), 0) / data.length
     : 0;
@@ -59,11 +59,8 @@ export default function PumpVsDip({ darkMode }) {
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div style={{ fontSize: '15px', fontWeight: '600', color: colors.text }}>
-          🔢 Pump Meter vs Dip Reading
-        </div>
+        <div style={{ fontSize: '15px', fontWeight: '600', color: colors.text }}>🔢 Pump Meter vs Dip Reading</div>
         <button
           onClick={loadData}
           style={{ padding: '6px 14px', background: darkMode ? '#2a2a3e' : '#f0f2f5', color: colors.text, border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
@@ -101,18 +98,13 @@ export default function PumpVsDip({ darkMode }) {
         ))}
       </div>
 
-      {/* Table */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: colors.subtext }}>Loading data...</div>
       ) : filtered.length === 0 ? (
         <div style={{ background: colors.card, borderRadius: '12px', padding: '60px 24px', textAlign: 'center' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔢</div>
-          <div style={{ fontSize: '16px', fontWeight: '500', color: colors.text, marginBottom: '8px' }}>
-            No comparison data yet
-          </div>
-          <div style={{ fontSize: '13px', color: colors.subtext }}>
-            Close a shift with pump meter readings to see comparisons here.
-          </div>
+          <div style={{ fontSize: '16px', fontWeight: '500', color: colors.text, marginBottom: '8px' }}>No comparison data yet</div>
+          <div style={{ fontSize: '13px', color: colors.subtext }}>Close a shift with pump meter readings to see comparisons here.</div>
         </div>
       ) : (
         <div style={{ background: colors.card, borderRadius: '12px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
@@ -124,7 +116,7 @@ export default function PumpVsDip({ darkMode }) {
                     {h}
                   </th>
                 ))}
-               </tr>
+              </tr>
             </thead>
             <tbody>
               {filtered.map((row, i) => {
@@ -135,9 +127,7 @@ export default function PumpVsDip({ darkMode }) {
 
                 return (
                   <tr key={row.id} style={{ background: isFlagged ? '#fdecea' : rowBg }}>
-                    <td style={{ padding: '10px 14px', fontSize: '13px', color: colors.text, borderBottom: `1px solid ${colors.border}` }}>
-                      {row.shift_date}
-                    </td>
+                    <td style={{ padding: '10px 14px', fontSize: '13px', color: colors.text, borderBottom: `1px solid ${colors.border}` }}>{row.shift_date}</td>
                     <td style={{ padding: '10px 14px', fontSize: '13px', color: colors.text, borderBottom: `1px solid ${colors.border}` }}>
                       {SHIFT_ICONS[row.shift_name]} {row.shift_name}
                     </td>
@@ -161,12 +151,12 @@ export default function PumpVsDip({ darkMode }) {
                     </td>
                     <td style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}` }}>
                       <span style={{
-                        background: isFlagged ? '#fdecea' : '#eafaf1',
-                        color:      isFlagged ? '#e74c3c' : '#27ae60',
-                        padding:    '3px 8px',
+                        background:   isFlagged ? '#fdecea' : '#eafaf1',
+                        color:        isFlagged ? '#e74c3c' : '#27ae60',
+                        padding:      '3px 8px',
                         borderRadius: '10px',
-                        fontSize:   '11px',
-                        fontWeight: '600',
+                        fontSize:     '11px',
+                        fontWeight:   '600',
                       }}>
                         {isFlagged ? '⚠️ FLAGGED' : '✅ OK'}
                       </span>

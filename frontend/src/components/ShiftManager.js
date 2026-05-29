@@ -15,15 +15,12 @@ const STATUS_COLORS = {
 };
 
 export default function ShiftManager({ tanks, darkMode }) {
-  const [shifts,          setShifts]         = useState([]);
-  const [loading,         setLoading]        = useState(true);
-  const [openingShift,    setOpeningShift]   = useState(false);
-  const [closingShiftId,  setClosingShiftId] = useState(null);
+  const [shifts,         setShifts]        = useState([]);
+  const [loading,        setLoading]       = useState(true);
+  const [openingShift,   setOpeningShift]  = useState(false);
+  const [closingShiftId, setClosingShiftId] = useState(null);
 
-  // Open shift form state
   const [openForm, setOpenForm] = useState({ tank_id: '', attendant_name: '' });
-
-  // Close shift form state
   const [closeForm, setCloseForm] = useState({
     pump_meter_opening: '',
     pump_meter_closing: '',
@@ -31,11 +28,11 @@ export default function ShiftManager({ tanks, darkMode }) {
   });
 
   const colors = {
-    card:    darkMode ? '#1e1e2e' : '#ffffff',
-    text:    darkMode ? '#e0e0e0' : '#1a1a2e',
-    subtext: darkMode ? '#888'    : '#666',
-    border:  darkMode ? '#2a2a3e' : '#e0e0e0',
-    input:   darkMode ? '#2a2a3e' : '#f8f8f8',
+    card:   darkMode ? '#1e1e2e' : '#ffffff',
+    text:   darkMode ? '#e0e0e0' : '#1a1a2e',
+    subtext:darkMode ? '#888'    : '#666',
+    border: darkMode ? '#2a2a3e' : '#e0e0e0',
+    input:  darkMode ? '#2a2a3e' : '#f8f8f8',
   };
 
   async function loadShifts() {
@@ -51,6 +48,7 @@ export default function ShiftManager({ tanks, darkMode }) {
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadShifts(); }, []);
 
   async function handleOpenShift() {
@@ -117,11 +115,8 @@ export default function ShiftManager({ tanks, darkMode }) {
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div style={{ fontSize: '15px', fontWeight: '600', color: colors.text }}>
-          ⏱ Shift Management
-        </div>
+        <div style={{ fontSize: '15px', fontWeight: '600', color: colors.text }}>⏱ Shift Management</div>
         <button
           onClick={() => { setOpeningShift(!openingShift); setClosingShiftId(null); }}
           style={{ padding: '8px 16px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '500' }}
@@ -130,12 +125,9 @@ export default function ShiftManager({ tanks, darkMode }) {
         </button>
       </div>
 
-      {/* Open shift form */}
       {openingShift && (
         <div style={{ background: colors.card, borderRadius: '12px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: `1px solid ${colors.border}` }}>
-          <div style={{ fontSize: '14px', fontWeight: '600', color: colors.text, marginBottom: '16px' }}>
-            🌅 Open New Shift
-          </div>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: colors.text, marginBottom: '16px' }}>🌅 Open New Shift</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div>
               <label style={labelStyle}>Tank</label>
@@ -145,9 +137,9 @@ export default function ShiftManager({ tanks, darkMode }) {
                 style={inputStyle}
               >
                 <option value="">Select tank...</option>
-                {tanks.map(t => (
+                {Array.isArray(tanks) && tanks.map(t => (
                   <option key={t.id} value={t.id}>
-                    Tank {t.tank_number} — {t.fuel_type.toUpperCase()}
+                    Tank {t.tank_number} — {t.fuel_type?.toUpperCase()}
                   </option>
                 ))}
               </select>
@@ -172,12 +164,9 @@ export default function ShiftManager({ tanks, darkMode }) {
         </div>
       )}
 
-      {/* Close shift form */}
       {closingShiftId && (
         <div style={{ background: '#fff9e6', borderRadius: '12px', padding: '20px', marginBottom: '20px', border: '1px solid #ffc107' }}>
-          <div style={{ fontSize: '14px', fontWeight: '600', color: '#856404', marginBottom: '16px' }}>
-            🔒 Close Shift — Enter Pump Meter Readings
-          </div>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#856404', marginBottom: '16px' }}>🔒 Close Shift — Enter Pump Meter Readings</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             <div>
               <label style={{ ...labelStyle, color: '#856404' }}>Pump Meter Opening (L)</label>
@@ -227,7 +216,6 @@ export default function ShiftManager({ tanks, darkMode }) {
         </div>
       )}
 
-      {/* Shifts list */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: colors.subtext }}>Loading shifts...</div>
       ) : shifts.length === 0 ? (
@@ -246,12 +234,10 @@ export default function ShiftManager({ tanks, darkMode }) {
             return (
               <div key={shift.id} style={{ background: colors.card, borderRadius: '10px', padding: '16px', boxShadow: '0 2px 6px rgba(0,0,0,0.05)', border: `1px solid ${colors.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-
-                  {/* Left: shift info */}
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                       <span style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, padding: '3px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600' }}>
-                        {sc.icon} {shift.shift_name.toUpperCase()}
+                        {sc.icon} {shift.shift_name?.toUpperCase()}
                       </span>
                       <span style={{ background: st.bg, color: st.text, padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '600' }}>
                         {st.label}
@@ -260,23 +246,18 @@ export default function ShiftManager({ tanks, darkMode }) {
                         Tank {shift.tank_number} · {shift.fuel_type?.toUpperCase()}
                       </span>
                     </div>
-
                     <div style={{ fontSize: '13px', color: colors.text, marginBottom: '6px' }}>
                       📅 {shift.shift_date} &nbsp;·&nbsp;
                       {shift.attendant_name && <span>👤 {shift.attendant_name} &nbsp;·&nbsp;</span>}
                       🕐 {new Date(shift.started_at).toLocaleTimeString()}
                       {shift.ended_at && ` → ${new Date(shift.ended_at).toLocaleTimeString()}`}
                     </div>
-
-                    {/* Stock figures */}
                     <div style={{ display: 'flex', gap: '20px', fontSize: '12px', color: colors.subtext }}>
                       {shift.opening_nsv && <span>Opening: <strong style={{ color: colors.text }}>{parseFloat(shift.opening_nsv).toFixed(0)}L</strong></span>}
                       {shift.closing_nsv && <span>Closing: <strong style={{ color: colors.text }}>{parseFloat(shift.closing_nsv).toFixed(0)}L</strong></span>}
                       {shift.dip_sales   && <span>Dip sales: <strong style={{ color: colors.text }}>{parseFloat(shift.dip_sales).toFixed(0)}L</strong></span>}
                       {shift.pump_meter_sales && <span>Pump sales: <strong style={{ color: colors.text }}>{parseFloat(shift.pump_meter_sales).toFixed(0)}L</strong></span>}
                     </div>
-
-                    {/* Variance */}
                     {shift.variance_litres !== null && shift.variance_litres !== undefined && (
                       <div style={{ marginTop: '6px', fontSize: '12px', color: shift.status === 'flagged' ? '#e74c3c' : '#27ae60', fontWeight: '600' }}>
                         {shift.status === 'flagged' ? '⚠️' : '✅'} Variance: {parseFloat(shift.variance_litres).toFixed(1)}L
@@ -284,8 +265,6 @@ export default function ShiftManager({ tanks, darkMode }) {
                       </div>
                     )}
                   </div>
-
-                  {/* Close button */}
                   {shift.status === 'open' && (
                     <button
                       onClick={() => { setClosingShiftId(isClosing ? null : shift.id); setOpeningShift(false); }}
