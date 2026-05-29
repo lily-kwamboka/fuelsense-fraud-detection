@@ -69,6 +69,7 @@ export default function PumpVsDip({ darkMode }) {
         </button>
       </div>
 
+      {/* Summary cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
         <div style={{ background: colors.card, borderRadius: '10px', padding: '16px', boxShadow: '0 2px 6px rgba(0,0,0,0.05)' }}>
           <div style={{ fontSize: '12px', color: colors.subtext, marginBottom: '6px' }}>Total Shifts Compared</div>
@@ -88,6 +89,7 @@ export default function PumpVsDip({ darkMode }) {
         </div>
       </div>
 
+      {/* Filters */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
         {['all', 'closed', 'flagged'].map(f => (
           <button key={f} style={filterBtnStyle(f)} onClick={() => setFilter(f)}>
@@ -148,7 +150,14 @@ export default function PumpVsDip({ darkMode }) {
                       {variancePct > 0 ? '+' : ''}{variancePct.toFixed(3)}%
                     </td>
                     <td style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.border}` }}>
-                      <span style={{ background: isFlagged ? '#fdecea' : '#eafaf1', color: isFlagged ? '#e74c3c' : '#27ae60', padding: '3px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' }}>
+                      <span style={{
+                        background:   isFlagged ? '#fdecea' : '#eafaf1',
+                        color:        isFlagged ? '#e74c3c' : '#27ae60',
+                        padding:      '3px 8px',
+                        borderRadius: '10px',
+                        fontSize:     '11px',
+                        fontWeight:   '600',
+                      }}>
                         {isFlagged ? '⚠️ FLAGGED' : '✅ OK'}
                       </span>
                     </td>
