@@ -28,20 +28,19 @@ function BottomNav({ activeTab, setActiveTab, darkMode, alertCount = 0 }) {
         >
           <div style={{ position: 'relative', display: 'inline-block' }}>
             <span style={styles.icon}>{item.icon}</span>
-            {/* Alert badge on Alerts tab */}
             {item.id === 'alerts' && alertCount > 0 && (
               <span style={{
-                position:   'absolute',
-                top:        '-4px',
-                right:      '-6px',
-                background: '#e74c3c',
-                color:      '#fff',
-                fontSize:   '9px',
-                fontWeight: '700',
-                padding:    '1px 4px',
+                position:     'absolute',
+                top:          '-4px',
+                right:        '-6px',
+                background:   '#e74c3c',
+                color:        '#fff',
+                fontSize:     '9px',
+                fontWeight:   '700',
+                padding:      '1px 4px',
                 borderRadius: '8px',
-                minWidth:   '14px',
-                textAlign:  'center',
+                minWidth:     '14px',
+                textAlign:    'center',
               }}>
                 {alertCount > 99 ? '99+' : alertCount}
               </span>
