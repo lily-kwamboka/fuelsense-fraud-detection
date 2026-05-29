@@ -34,10 +34,10 @@ function App() {
   const [alertSummary,   setAlertSummary] = useState({ critical: 0, warning: 0, info: 0 });
   const isMobile = useIsMobile();
   const { addToast } = useToast();
-  const { log }      = useAuditLog(session, userProfile, activeStation);
   const [stations,       setStations]      = useState([]);
   const [activeStation,  setActiveStation] = useState(null);
   const [userProfile,    setUserProfile]   = useState(null);
+  const { log } = useAuditLog(session, userProfile, activeStation);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -241,6 +241,7 @@ function App() {
               {activeTab === 'shifts'         && '⏱ Shift Management'}
               {activeTab === 'pump-vs-dip'    && '🔢 Pump vs Dip'}
               {activeTab === 'alerts'         && '🔔 Alerts'}
+              {activeTab === 'audit'          && '🔍 Audit Log'}
               {activeTab === 'reports'        && '📈 Reports'}
             </div>
             {!isMobile && stations.length > 1 && (
