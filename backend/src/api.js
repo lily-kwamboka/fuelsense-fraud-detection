@@ -450,6 +450,54 @@ app.get('/api/pump-vs-dip', async (req, res) => {
   }
 });
 
+// ── POST /api/audit-log ─────────────────────────────────────────────────────
+app.post('/api/audit-log', async (req, res) => {
+  const { user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value } = req.body;
+  if (!user_email || !action || !entity_type) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  try {
+    const client = await getDb();
+    await client.query(
+      `INSERT INTO audit_log
+         (user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        user_email, user_role || null, action, entity_type,
+        entity_id || null, station_id || null,
+        old_value ? JSON.stringify(old_value) : null,
+        new_value ? JSON.stringify(new_value) : null,
+        req.headers['x-forwarded-for'] || req.socket.remoteAddress || null,
+      ]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[API] audit-log error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/audit-log ──────────────────────────────────────────────────────
+app.get('/api/audit-log', async (req, res) => {
+  try {
+    const client    = await getDb();
+    const stationId = req.query.station_id;
+    const limit     = parseInt(req.query.limit || '50');
+    let query  = `SELECT id, user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address, created_at FROM audit_log`;
+    const params = [];
+    if (stationId) {
+      params.push(stationId);
+      query += ` WHERE station_id = $${params.length}`;
+    }
+    params.push(limit);
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+    const result = await client.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
