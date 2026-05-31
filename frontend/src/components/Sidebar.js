@@ -77,12 +77,12 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
 }
 
 const styles = {
-  sidebar:     { width: '220px', minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 100 },
+  sidebar:     { width: '220px', height: '100vh', display: 'flex', flexDirection: 'column', position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 100, overflowY: 'auto' },
   logoSection: { display: 'flex', alignItems: 'center', gap: '12px', padding: '24px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' },
   logoIcon:    { fontSize: '28px' },
   logoTitle:   { color: '#fff', fontSize: '16px', fontWeight: '700' },
   logoSub:     { color: '#4CAF50', fontSize: '11px', marginTop: '1px' },
-  nav:         { flex: 1, padding: '16px 8px' },
+  nav:         { flex: 1, padding: '16px 8px', overflowY: 'auto' },
   navItem:     { width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '4px', transition: 'all 0.2s' },
   navIcon:     { fontSize: '16px', width: '20px', textAlign: 'center' },
   navLabel:    { color: '#ccc', fontSize: '13px', fontWeight: '500' },
