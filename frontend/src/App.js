@@ -14,6 +14,7 @@ import Reports from './components/Reports';
 import AlertsPanel from './components/AlertsPanel';
 import ShiftManager from './components/ShiftManager';
 import PumpVsDip from './components/PumpVsDip';
+import Pricing from './components/Pricing';
 import useIsMobile from './useIsMobile';
 import { useAuditLog } from './useAuditLog';
 import { useToast } from './Toast';
@@ -242,6 +243,7 @@ function App() {
               {activeTab === 'pump-vs-dip'    && '🔢 Pump vs Dip'}
               {activeTab === 'alerts'         && '🔔 Alerts'}
               {activeTab === 'audit'          && '🔍 Audit Log'}
+              {activeTab === 'pricing'        && '💳 Subscription & Billing'}
               {activeTab === 'reports'        && '📈 Reports'}
             </div>
             {!isMobile && stations.length > 1 && (
@@ -460,6 +462,19 @@ function App() {
             <div>
               <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>🔍 Audit Log</div>
               <AuditLog api={API} activeStation={activeStation} darkMode={darkMode} />
+            </div>
+          )}
+
+          {/* ── PRICING ── */}
+          {activeTab === 'pricing' && (
+            <div>
+              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>💳 Subscription & Billing</div>
+              <Pricing
+                api={API}
+                activeStation={activeStation}
+                session={session}
+                darkMode={darkMode}
+              />
             </div>
           )}
 

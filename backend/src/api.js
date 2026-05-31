@@ -498,6 +498,191 @@ app.get('/api/audit-log', async (req, res) => {
   }
 });
 
+// ── GET /api/plans ──────────────────────────────────────────────────────────
+app.get('/api/plans', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT * FROM subscription_plans ORDER BY price_monthly ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/subscription ───────────────────────────────────────────────────
+app.get('/api/subscription', async (req, res) => {
+  try {
+    const client     = await getDb();
+    const stationId  = req.query.station_id;
+    if (!stationId) return res.status(400).json({ error: 'station_id required' });
+
+    const result = await client.query(
+      `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual,
+              p.max_stations, p.max_tanks, p.features
+         FROM subscriptions s
+         JOIN subscription_plans p ON p.id = s.plan_id
+        WHERE s.station_id = $1
+        ORDER BY s.created_at DESC
+        LIMIT 1`,
+      [stationId]
+    );
+    res.json(result.rows[0] || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/payments/initiate ─────────────────────────────────────────────
+app.post('/api/payments/initiate', async (req, res) => {
+  const { station_id, plan_id, billing_cycle, user_email, user_name, phone } = req.body;
+
+  if (!station_id || !plan_id || !billing_cycle || !user_email) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const client = await getDb();
+    const pesapal = require('./pesapal');
+
+    // Get plan details
+    const planRes = await client.query(
+      `SELECT * FROM subscription_plans WHERE id = $1`, [plan_id]
+    );
+    if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
+
+    const plan   = planRes.rows[0];
+    const amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
+
+    // Create payment record
+    const payRes = await client.query(
+      `INSERT INTO payments (station_id, amount_kes, billing_cycle, plan_name, status)
+       VALUES ($1, $2, $3, $4, 'pending') RETURNING id`,
+      [station_id, amount, billing_cycle, plan.name]
+    );
+    const paymentId = payRes.rows[0].id;
+
+    // Register IPN
+    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
+    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+
+    // Submit order to Pesapal
+    const order = {
+      id:                   paymentId,
+      currency:             'KES',
+      amount:               parseFloat(amount),
+      description:          `FuelSense ${plan.name} - ${billing_cycle} subscription`,
+      callback_url:         process.env.FRONTEND_URL + '/payment-success',
+      notification_id:      ipnId,
+      billing_address: {
+        email_address:  user_email,
+        phone_number:   phone || '',
+        country_code:   'KE',
+        first_name:     user_name?.split(' ')[0] || 'Customer',
+        last_name:      user_name?.split(' ')[1] || '',
+      },
+    };
+
+    const pesapalRes = await pesapal.submitOrder(order);
+
+    // Update payment with Pesapal order ID
+    await client.query(
+      `UPDATE payments SET pesapal_order_id = $1 WHERE id = $2`,
+      [pesapalRes.order_tracking_id, paymentId]
+    );
+
+    res.json({
+      payment_id:   paymentId,
+      redirect_url: pesapalRes.redirect_url,
+      amount,
+      plan_name:    plan.name,
+      billing_cycle,
+    });
+
+  } catch (err) {
+    console.error('[API] payment initiate error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/payments/callback ──────────────────────────────────────────────
+app.get('/api/payments/callback', async (req, res) => {
+  const { OrderTrackingId, OrderMerchantReference } = req.query;
+
+  try {
+    const client  = await getDb();
+    const pesapal = require('./pesapal');
+
+    const status = await pesapal.getTransactionStatus(OrderTrackingId);
+
+    if (status.payment_status_description === 'Completed') {
+      // Update payment
+      await client.query(
+        `UPDATE payments SET status = 'completed', pesapal_tracking_id = $1 WHERE id = $2`,
+        [OrderTrackingId, OrderMerchantReference]
+      );
+
+      // Get payment details
+      const payRes = await client.query(
+        `SELECT * FROM payments WHERE id = $1`, [OrderMerchantReference]
+      );
+      const payment = payRes.rows[0];
+
+      if (payment) {
+        // Get plan
+        const planRes = await client.query(
+          `SELECT * FROM subscription_plans WHERE name = $1`, [payment.plan_name]
+        );
+        const plan = planRes.rows[0];
+
+        // Calculate period
+        const now   = new Date();
+        const end   = new Date(now);
+        if (payment.billing_cycle === 'annual') {
+          end.setFullYear(end.getFullYear() + 1);
+        } else {
+          end.setMonth(end.getMonth() + 1);
+        }
+
+        // Upsert subscription
+        await client.query(
+          `INSERT INTO subscriptions
+             (station_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
+           VALUES ($1, $2, $3, 'active', $4, $5)
+           ON CONFLICT DO NOTHING`,
+          [payment.station_id, plan.id, payment.billing_cycle, now, end]
+        );
+
+        console.log('[PESAPAL] Payment completed for station:', payment.station_id);
+      }
+    }
+
+    res.redirect(process.env.FRONTEND_URL + '/payment-success?status=' + status.payment_status_description);
+
+  } catch (err) {
+    console.error('[API] payment callback error:', err.message);
+    res.redirect(process.env.FRONTEND_URL + '?payment=error');
+  }
+});
+
+// ── GET /api/payments/history ───────────────────────────────────────────────
+app.get('/api/payments/history', async (req, res) => {
+  try {
+    const client    = await getDb();
+    const stationId = req.query.station_id;
+    if (!stationId) return res.status(400).json({ error: 'station_id required' });
+
+    const result = await client.query(
+      `SELECT * FROM payments WHERE station_id = $1 ORDER BY created_at DESC LIMIT 20`,
+      [stationId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

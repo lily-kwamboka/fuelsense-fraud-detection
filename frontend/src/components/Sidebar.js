@@ -9,6 +9,7 @@ const navItems = [
   { id: 'shifts',      icon: '⏱',  label: 'Shifts' },
   { id: 'pump-vs-dip', icon: '🔢', label: 'Pump vs Dip' },
   { id: 'alerts',      icon: '🔔', label: 'Alerts' },
+  { id: 'pricing',        icon: '💳', label: 'Billing' },
 ];
 
 function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut }) {
