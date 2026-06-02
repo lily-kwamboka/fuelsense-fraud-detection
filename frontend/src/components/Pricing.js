@@ -34,10 +34,13 @@ function Pricing({ api, activeStation, session, darkMode }) {
         user_name:     session?.user?.email?.split('@')[0],
       };
       
-      // For test payment, override amount
+      // For test payment, override amount and force monthly billing
       if (isTest) {
         payload.test_amount = plan.price_monthly;
+        payload.billing_cycle = 'monthly'; // Force monthly for test payments
       }
+      
+      console.log('[PRICING] Sending payload:', payload);
       
       const res = await fetch(api + '/api/payments/initiate', {
         method:  'POST',
