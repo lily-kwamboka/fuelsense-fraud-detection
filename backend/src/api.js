@@ -628,21 +628,36 @@ app.post('/api/payments/initiate', async (req, res) => {
 app.post('/api/payments/test', async (req, res) => {
   const { station_id, amount, user_email, user_name, phone } = req.body;
 
-  if (!station_id || !amount || !user_email) {
-    return res.status(400).json({ error: 'Missing required fields: station_id, amount, user_email' });
+  if (!amount || !user_email) {
+    return res.status(400).json({ error: 'Missing required fields: amount, user_email' });
   }
 
   try {
     const client = await getDb();
     const pesapal = require('./pesapal');
 
-    console.log('[TEST PAYMENT] Amount:', amount, 'for station:', station_id);
+    // Get a valid station ID - if station_id is 'test' or invalid, use the first station
+    let realStationId = station_id;
+    
+    // Check if station_id is 'test' or not a valid UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!station_id || station_id === 'test' || !uuidRegex.test(station_id)) {
+      const stationRes = await client.query(`SELECT id FROM stations LIMIT 1`);
+      if (stationRes.rows.length) {
+        realStationId = stationRes.rows[0].id;
+        console.log('[TEST PAYMENT] Using fallback station ID:', realStationId);
+      } else {
+        return res.status(400).json({ error: 'No stations found in database' });
+      }
+    }
+
+    console.log('[TEST PAYMENT] Amount:', amount, 'for station:', realStationId);
 
     // Create payment record
     const payRes = await client.query(
       `INSERT INTO payments (station_id, amount_kes, billing_cycle, plan_name, status)
        VALUES ($1, $2, 'monthly', 'TEST_PAYMENT', 'pending') RETURNING id`,
-      [station_id, amount]
+      [realStationId, amount]
     );
     const paymentId = payRes.rows[0].id;
 
@@ -669,7 +684,6 @@ app.post('/api/payments/test', async (req, res) => {
 
     const pesapalRes = await pesapal.submitOrder(order);
 
-    // Update payment with Pesapal order ID
     await client.query(
       `UPDATE payments SET pesapal_order_id = $1 WHERE id = $2`,
       [pesapalRes.order_tracking_id, paymentId]
