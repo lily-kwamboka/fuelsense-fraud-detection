@@ -367,9 +367,26 @@ app.post('/api/alerts/:id/acknowledge', async (req, res) => {
 // ── GET /api/shifts ───────────────────────────────────────────────────────
 app.get('/api/shifts', async (req, res) => {
   try {
-    const client = await getDb();
-    const shifts = await getAllShifts(client, parseInt(req.query.limit) || 50);
-    res.json(shifts);
+    const client    = await getDb();
+    const limit     = parseInt(req.query.limit) || 50;
+    const stationId = req.query.station_id;
+
+    let query  = `
+      SELECT s.*, t.tank_number, t.fuel_type
+      FROM shifts s
+      JOIN tanks t ON t.id = s.tank_id`;
+    const params = [];
+
+    if (stationId) {
+      params.push(stationId);
+      query += ` WHERE t.station_id = $${params.length}`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY s.shift_date DESC, s.started_at DESC LIMIT $${params.length}`;
+
+    const result = await client.query(query, params);
+    res.json(result.rows);
   } catch (err) {
     console.error('[API] GET /api/shifts error:', err.message);
     res.status(500).json({ error: err.message });
