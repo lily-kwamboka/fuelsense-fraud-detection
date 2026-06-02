@@ -40,6 +40,7 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
   async function loadShifts(sid) {
     setLoading(true);
     try {
+      await new Promise(resolve => setTimeout(resolve, 500));
       const id   = sid !== undefined ? sid : stationIdRef.current;
       const res  = await fetch(`${API}/api/shifts?limit=30${id ? '&station_id=' + id : ''}`);
       const data = await res.json();
@@ -73,7 +74,7 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
         setOpeningShift(false);
         setTankId('');
         setAttendantName('');
-        loadShifts(stationIdRef.current);
+        await loadShifts(stationIdRef.current);
       }
     } catch (err) {
       console.error('Failed to open shift:', err);
@@ -100,7 +101,7 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
       }
       setClosingShiftId(null);
       setCloseForm({ pump_meter_opening: '', pump_meter_closing: '', notes: '' });
-      loadShifts(stationIdRef.current);
+      await loadShifts(stationIdRef.current);
     } catch (err) {
       console.error('Failed to close shift:', err);
       alert('Error closing shift.');
