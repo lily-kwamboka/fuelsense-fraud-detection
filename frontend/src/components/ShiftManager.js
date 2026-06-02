@@ -14,7 +14,7 @@ const STATUS_COLORS = {
   flagged: { bg: '#fdecea', text: '#721c24', label: 'FLAGGED' },
 };
 
-export default function ShiftManager({ tanks, darkMode }) {
+export default function ShiftManager({ tanks, darkMode, stationId }) {
   const [shifts,         setShifts]        = useState([]);
   const [loading,        setLoading]       = useState(true);
   const [openingShift,   setOpeningShift]  = useState(false);
@@ -28,17 +28,17 @@ export default function ShiftManager({ tanks, darkMode }) {
   });
 
   const colors = {
-    card:   darkMode ? '#1e1e2e' : '#ffffff',
-    text:   darkMode ? '#e0e0e0' : '#1a1a2e',
-    subtext:darkMode ? '#888'    : '#666',
-    border: darkMode ? '#2a2a3e' : '#e0e0e0',
-    input:  darkMode ? '#2a2a3e' : '#f8f8f8',
+    card:    darkMode ? '#1e1e2e' : '#ffffff',
+    text:    darkMode ? '#e0e0e0' : '#1a1a2e',
+    subtext: darkMode ? '#888'    : '#666',
+    border:  darkMode ? '#2a2a3e' : '#e0e0e0',
+    input:   darkMode ? '#2a2a3e' : '#f8f8f8',
   };
 
   async function loadShifts() {
     setLoading(true);
     try {
-      const res  = await fetch(`${API}/api/shifts?limit=30`);
+      const res  = await fetch(`${API}/api/shifts?limit=30${stationId ? '&station_id=' + stationId : ''}`);
       const data = await res.json();
       setShifts(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -49,7 +49,7 @@ export default function ShiftManager({ tanks, darkMode }) {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadShifts(); }, []);
+  useEffect(() => { loadShifts(); }, [stationId]);
 
   async function handleOpenShift() {
     if (!openForm.tank_id) { alert('Please select a tank.'); return; }
