@@ -69,18 +69,21 @@ function Pricing({ api, activeStation, session, darkMode }) {
     setSelected(null);
   }
 
-  // Direct test payment handler
+  // Direct test payment handler - UPDATED with real station ID
   async function handleDirectTest() {
     setTestLoading(true);
     setError(null);
     try {
       console.log('[PRICING] Sending direct test payment for KES 100');
       
+      // Use the real station ID from your database
+      const REAL_STATION_ID = "a0000000-0000-0000-0000-000000000001";
+      
       const res = await fetch(api + '/api/payments/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          station_id: activeStation,
+          station_id: REAL_STATION_ID,  // Use real UUID from your database
           amount: 100,
           user_email: session?.user?.email,
           user_name: session?.user?.email?.split('@')[0],
@@ -268,11 +271,11 @@ function Pricing({ api, activeStation, session, darkMode }) {
         </button>
       </div>
 
-      {/* DIRECT Test payment button — bypass plan system */}
+      {/* DIRECT TEST payment button — bypass plan system */}
       <div style={{ marginTop: '16px', padding: '16px', background: '#d1ecf1', borderRadius: '8px', border: '1px solid #bee5eb' }}>
         <div style={{ fontSize: '13px', fontWeight: '600', color: '#0c5460', marginBottom: '8px' }}>🔧 DIRECT TEST (Bypasses Plan System)</div>
         <div style={{ fontSize: '12px', color: '#0c5460', marginBottom: '12px' }}>
-          This button calls /api/payments/test directly with KES 100.
+          This button calls /api/payments/test directly with KES 100 using real station ID.
         </div>
         <button
           style={{ ...styles.subscribeBtn, background: '#17a2b8', width: 'auto', padding: '8px 20px' }}
