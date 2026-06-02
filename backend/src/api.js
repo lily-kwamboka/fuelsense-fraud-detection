@@ -426,58 +426,41 @@ app.post('/api/shifts/:id/close', async (req, res) => {
 // ── GET /api/pump-vs-dip ──────────────────────────────────────────────────
 app.get('/api/pump-vs-dip', async (req, res) => {
   try {
-    const client = await getDb();
-    const result = await client.query(
-      `SELECT
-         s.id,
-         s.shift_name,
-         s.shift_date,
-         s.opening_nsv,
-         s.closing_nsv,
-         s.pump_meter_sales,
-         s.dip_sales,
-         s.variance_litres,
-         s.variance_pct,
-         s.status,
-         s.attendant_name,
-         t.tank_number,
-         t.fuel_type
-       FROM shifts s
-       JOIN tanks t ON t.id = s.tank_id
-       WHERE s.status IN ('closed', 'flagged')
-         AND s.dip_sales IS NOT NULL
-       ORDER BY s.shift_date DESC, s.started_at DESC
-       LIMIT 60`
-    );
+    const client    = await getDb();
+    const stationId = req.query.station_id;
+
+    let query = `
+      SELECT
+        s.id,
+        s.shift_name,
+        s.shift_date,
+        s.opening_nsv,
+        s.closing_nsv,
+        s.pump_meter_sales,
+        s.dip_sales,
+        s.variance_litres,
+        s.variance_pct,
+        s.status,
+        s.attendant_name,
+        t.tank_number,
+        t.fuel_type
+      FROM shifts s
+      JOIN tanks t ON t.id = s.tank_id
+      WHERE s.status IN ('closed', 'flagged')
+        AND s.dip_sales IS NOT NULL`;
+
+    const params = [];
+
+    if (stationId) {
+      params.push(stationId);
+      query += ` AND t.station_id = $${params.length}`;
+    }
+
+    query += ` ORDER BY s.shift_date DESC, s.started_at DESC LIMIT 60`;
+
+    const result = await client.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── POST /api/audit-log ─────────────────────────────────────────────────────
-app.post('/api/audit-log', async (req, res) => {
-  const { user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value } = req.body;
-  if (!user_email || !action || !entity_type) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  try {
-    const client = await getDb();
-    await client.query(
-      `INSERT INTO audit_log
-         (user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        user_email, user_role || null, action, entity_type,
-        entity_id || null, station_id || null,
-        old_value ? JSON.stringify(old_value) : null,
-        new_value ? JSON.stringify(new_value) : null,
-        req.headers['x-forwarded-for'] || req.socket.remoteAddress || null,
-      ]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[API] audit-log error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
