@@ -14,6 +14,11 @@ const DATABASE_URL = process.env.DATABASE_URL;
 app.use(cors());
 app.use(express.json());
 
+// ── Simple test endpoint for deployment verification ────────────────────────
+app.get('/api/ping', (req, res) => {
+  res.json({ message: 'pong', timestamp: new Date().toISOString() });
+});
+
 let db = null;
 
 async function getDb() {
