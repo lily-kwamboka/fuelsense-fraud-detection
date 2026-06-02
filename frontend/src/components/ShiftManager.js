@@ -49,7 +49,7 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadShifts(); }, [stationId]);
+  useEffect(() => { loadShifts(); }, []);
 
   async function handleOpenShift() {
     if (!openForm.tank_id) { alert('Please select a tank.'); return; }
