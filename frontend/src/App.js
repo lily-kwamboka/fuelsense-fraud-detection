@@ -444,17 +444,17 @@ function App() {
 
           {/* ── SHIFTS ── */}
           {activeTab === 'shifts' && (
-            <ShiftManager tanks={tanks} darkMode={darkMode} />
+            <ShiftManager tanks={tanks} darkMode={darkMode} stationId={activeStation} />
           )}
 
           {/* ── PUMP VS DIP ── */}
           {activeTab === 'pump-vs-dip' && (
-            <PumpVsDip darkMode={darkMode} />
+            <PumpVsDip darkMode={darkMode} stationId={activeStation} />
           )}
 
           {/* ── ALERTS ── */}
           {activeTab === 'alerts' && (
-            <AlertsPanel darkMode={darkMode} />
+            <AlertsPanel darkMode={darkMode} stationId={activeStation} />
           )}
 
           {/* ── AUDIT LOG ── */}
