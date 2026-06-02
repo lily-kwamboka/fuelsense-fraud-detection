@@ -8,7 +8,7 @@ const SHIFT_ICONS = {
   night:     '🌙',
 };
 
-export default function PumpVsDip({ darkMode }) {
+export default function PumpVsDip({ darkMode, stationId }) {
   const [data,    setData]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter,  setFilter]  = useState('all');
@@ -24,7 +24,8 @@ export default function PumpVsDip({ darkMode }) {
   async function loadData() {
     setLoading(true);
     try {
-      const res  = await fetch(`${API}/api/pump-vs-dip`);
+      const url = `${API}/api/pump-vs-dip${stationId ? '?station_id=' + stationId : ''}`;
+      const res  = await fetch(url);
       const rows = await res.json();
       setData(Array.isArray(rows) ? rows : []);
     } catch (err) {
@@ -35,7 +36,7 @@ export default function PumpVsDip({ darkMode }) {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [stationId]);
 
   const filtered = filter === 'all'
     ? data
