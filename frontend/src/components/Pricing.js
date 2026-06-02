@@ -201,7 +201,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
       {/* Test payment button — remove in production */}
       <div style={{ marginTop: '24px', padding: '16px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #ffc107' }}>
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 10)</div>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 100 Minimum)</div>
         <div style={{ fontSize: '12px', color: '#856404', marginBottom: '12px' }}>
           Use this to verify the payment flow works end to end.
         </div>
@@ -213,8 +213,8 @@ function Pricing({ api, activeStation, session, darkMode }) {
               const testPlan = { 
                 ...plans[0], 
                 id: plans[0].id,  // Use real UUID from database
-                price_monthly: '10', 
-                price_annual: '10' 
+                price_monthly: '100', 
+                price_annual: '100' 
               };
               handleSubscribe(testPlan, true);
             } else {
@@ -223,7 +223,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
           }}
           disabled={loading || !plans || plans.length === 0}
         >
-          Test Pay KES 10
+          Test Pay KES 100
         </button>
       </div>
     </div>
