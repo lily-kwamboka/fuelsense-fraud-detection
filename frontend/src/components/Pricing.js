@@ -201,17 +201,27 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
       {/* Test payment button — remove in production */}
       <div style={{ marginTop: '24px', padding: '16px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #ffc107' }}>
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 10 Minimum)</div>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 10)</div>
         <div style={{ fontSize: '12px', color: '#856404', marginBottom: '12px' }}>
-          Use this to verify the payment flow works end to end. Minimum amount is KES 10.
+          Use this to verify the payment flow works end to end.
         </div>
         <button
           style={{ ...styles.subscribeBtn, background: '#f39c12', width: 'auto', padding: '8px 20px' }}
           onClick={() => {
-            const testPlan = { ...plans[0], id: 'test', price_monthly: '10', price_annual: '10' };
-            handleSubscribe(testPlan, true);
+            if (plans && plans.length > 0) {
+              // Use the actual plan ID from the first plan, not "test"
+              const testPlan = { 
+                ...plans[0], 
+                id: plans[0].id,  // Use real UUID from database
+                price_monthly: '10', 
+                price_annual: '10' 
+              };
+              handleSubscribe(testPlan, true);
+            } else {
+              alert('Please wait for plans to load before testing');
+            }
           }}
-          disabled={loading || !plans.length}
+          disabled={loading || !plans || plans.length === 0}
         >
           Test Pay KES 10
         </button>
