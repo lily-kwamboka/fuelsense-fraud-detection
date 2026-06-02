@@ -14,6 +14,11 @@ const DATABASE_URL = process.env.DATABASE_URL;
 app.use(cors());
 app.use(express.json());
 
+// ── Simple test endpoint for deployment verification ────────────────────────
+app.get('/api/ping', (req, res) => {
+  res.json({ message: 'pong', timestamp: new Date().toISOString() });
+});
+
 let db = null;
 
 async function getDb() {
@@ -367,26 +372,9 @@ app.post('/api/alerts/:id/acknowledge', async (req, res) => {
 // ── GET /api/shifts ───────────────────────────────────────────────────────
 app.get('/api/shifts', async (req, res) => {
   try {
-    const client    = await getDb();
-    const limit     = parseInt(req.query.limit) || 50;
-    const stationId = req.query.station_id;
-
-    let query  = `
-      SELECT s.*, t.tank_number, t.fuel_type
-      FROM shifts s
-      JOIN tanks t ON t.id = s.tank_id`;
-    const params = [];
-
-    if (stationId) {
-      params.push(stationId);
-      query += ` WHERE t.station_id = $${params.length}`;
-    }
-
-    params.push(limit);
-    query += ` ORDER BY s.shift_date DESC, s.started_at DESC LIMIT $${params.length}`;
-
-    const result = await client.query(query, params);
-    res.json(result.rows);
+    const client = await getDb();
+    const shifts = await getAllShifts(client, parseInt(req.query.limit) || 50);
+    res.json(shifts);
   } catch (err) {
     console.error('[API] GET /api/shifts error:', err.message);
     res.status(500).json({ error: err.message });
@@ -553,7 +541,7 @@ app.get('/api/subscription', async (req, res) => {
 
 // ── POST /api/payments/initiate ─────────────────────────────────────────────
 app.post('/api/payments/initiate', async (req, res) => {
-  const { station_id, plan_id, billing_cycle, user_email, user_name, phone } = req.body;
+  const { station_id, plan_id, billing_cycle, user_email, user_name, phone, test_amount } = req.body;
 
   if (!station_id || !plan_id || !billing_cycle || !user_email) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -563,14 +551,26 @@ app.post('/api/payments/initiate', async (req, res) => {
     const client = await getDb();
     const pesapal = require('./pesapal');
 
-    // Get plan details
-    const planRes = await client.query(
-      `SELECT * FROM subscription_plans WHERE id = $1`, [plan_id]
-    );
-    if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
+    let plan;
+    let amount;
+    let isTest = false;
 
-    const plan   = planRes.rows[0];
-    const amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
+    // Check if this is a test payment
+    if (test_amount) {
+      isTest = true;
+      amount = parseFloat(test_amount);
+      plan = { name: 'TEST_PAYMENT', id: 'test' };
+    } else {
+      // Get plan details from database
+      const planRes = await client.query(
+        `SELECT * FROM subscription_plans WHERE id = $1`, [plan_id]
+      );
+      if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
+      plan = planRes.rows[0];
+      amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
+    }
+
+    console.log('[PAYMENT]', isTest ? 'TEST PAYMENT' : 'LIVE PAYMENT', 'Amount:', amount);
 
     // Create payment record
     const payRes = await client.query(
@@ -589,7 +589,7 @@ app.post('/api/payments/initiate', async (req, res) => {
       id:                   paymentId,
       currency:             'KES',
       amount:               parseFloat(amount),
-      description:          `FuelSense ${plan.name} - ${billing_cycle} subscription`,
+      description:          isTest ? 'FuelSense Test Payment' : `FuelSense ${plan.name} - ${billing_cycle} subscription`,
       callback_url:         process.env.FRONTEND_URL + '/payment-success',
       notification_id:      ipnId,
       billing_address: {
@@ -615,10 +615,74 @@ app.post('/api/payments/initiate', async (req, res) => {
       amount,
       plan_name:    plan.name,
       billing_cycle,
+      is_test:      isTest,
     });
 
   } catch (err) {
     console.error('[API] payment initiate error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/payments/test ─────────────────────────────────────────────────
+app.post('/api/payments/test', async (req, res) => {
+  const { station_id, amount, user_email, user_name, phone } = req.body;
+
+  if (!station_id || !amount || !user_email) {
+    return res.status(400).json({ error: 'Missing required fields: station_id, amount, user_email' });
+  }
+
+  try {
+    const client = await getDb();
+    const pesapal = require('./pesapal');
+
+    console.log('[TEST PAYMENT] Amount:', amount, 'for station:', station_id);
+
+    // Create payment record
+    const payRes = await client.query(
+      `INSERT INTO payments (station_id, amount_kes, billing_cycle, plan_name, status)
+       VALUES ($1, $2, 'monthly', 'TEST_PAYMENT', 'pending') RETURNING id`,
+      [station_id, amount]
+    );
+    const paymentId = payRes.rows[0].id;
+
+    // Register IPN
+    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
+    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+
+    // Submit order to Pesapal
+    const order = {
+      id:                   paymentId,
+      currency:             'KES',
+      amount:               parseFloat(amount),
+      description:          `FuelSense Test Payment - KES ${amount}`,
+      callback_url:         process.env.FRONTEND_URL + '/payment-success',
+      notification_id:      ipnId,
+      billing_address: {
+        email_address:  user_email,
+        phone_number:   phone || '',
+        country_code:   'KE',
+        first_name:     user_name?.split(' ')[0] || 'Customer',
+        last_name:      user_name?.split(' ')[1] || '',
+      },
+    };
+
+    const pesapalRes = await pesapal.submitOrder(order);
+
+    // Update payment with Pesapal order ID
+    await client.query(
+      `UPDATE payments SET pesapal_order_id = $1 WHERE id = $2`,
+      [pesapalRes.order_tracking_id, paymentId]
+    );
+
+    res.json({
+      payment_id:   paymentId,
+      redirect_url: pesapalRes.redirect_url,
+      amount,
+    });
+
+  } catch (err) {
+    console.error('[TEST PAYMENT] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -646,33 +710,38 @@ app.get('/api/payments/callback', async (req, res) => {
       );
       const payment = payRes.rows[0];
 
-      if (payment) {
+      if (payment && payment.plan_name !== 'TEST_PAYMENT') {
         // Get plan
         const planRes = await client.query(
           `SELECT * FROM subscription_plans WHERE name = $1`, [payment.plan_name]
         );
         const plan = planRes.rows[0];
 
-        // Calculate period
-        const now   = new Date();
-        const end   = new Date(now);
-        if (payment.billing_cycle === 'annual') {
-          end.setFullYear(end.getFullYear() + 1);
-        } else {
-          end.setMonth(end.getMonth() + 1);
+        if (plan) {
+          // Calculate period
+          const now   = new Date();
+          const end   = new Date(now);
+          if (payment.billing_cycle === 'annual') {
+            end.setFullYear(end.getFullYear() + 1);
+          } else {
+            end.setMonth(end.getMonth() + 1);
+          }
+
+          // Upsert subscription
+          await client.query(
+            `INSERT INTO subscriptions
+               (station_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
+             VALUES ($1, $2, $3, 'active', $4, $5)
+             ON CONFLICT (station_id, plan_id) DO UPDATE SET
+               status = 'active',
+               current_period_start = EXCLUDED.current_period_start,
+               current_period_end = EXCLUDED.current_period_end`,
+            [payment.station_id, plan.id, payment.billing_cycle, now, end]
+          );
         }
-
-        // Upsert subscription
-        await client.query(
-          `INSERT INTO subscriptions
-             (station_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
-           VALUES ($1, $2, $3, 'active', $4, $5)
-           ON CONFLICT DO NOTHING`,
-          [payment.station_id, plan.id, payment.billing_cycle, now, end]
-        );
-
-        console.log('[PESAPAL] Payment completed for station:', payment.station_id);
       }
+
+      console.log('[PESAPAL] Payment completed for station:', payment?.station_id);
     }
 
     res.redirect(process.env.FRONTEND_URL + '/payment-success?status=' + status.payment_status_description);
