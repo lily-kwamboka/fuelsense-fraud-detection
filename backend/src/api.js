@@ -580,9 +580,14 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN
+    // Register IPN with better error handling
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
@@ -661,9 +666,14 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN
+    // Register IPN with better error handling
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
