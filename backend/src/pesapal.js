@@ -1,112 +1,94 @@
 'use strict';
 
-const fetch = require('node-fetch');
+const { Pesapal } = require('pesapal-v3');
 
-const CONSUMER_KEY    = process.env.PESAPAL_CONSUMER_KEY;
-const CONSUMER_SECRET = process.env.PESAPAL_CONSUMER_SECRET;
-const IS_SANDBOX      = process.env.PESAPAL_ENV !== 'live';
-
-const BASE_URL = IS_SANDBOX
-  ? 'https://cybqa.pesapal.com/pesapalv3'
-  : 'https://pay.pesapal.com/v3';
+// Determine environment - 'production' for live, 'sandbox' for testing
+const mode = process.env.PESAPAL_ENV === 'live' ? 'production' : 'sandbox';
 
 // Log which environment we're using
-console.log('[PESAPAL] Environment:', IS_SANDBOX ? 'SANDBOX' : 'LIVE', '| Base URL:', BASE_URL);
+console.log('[PESAPAL] Environment:', mode === 'production' ? 'LIVE' : 'SANDBOX');
 
-let cachedToken     = null;
-let tokenExpiry     = null;
+// Initialize the Pesapal client once
+const pesapal = new Pesapal({
+    consumerKey: process.env.PESAPAL_CONSUMER_KEY,
+    consumerSecret: process.env.PESAPAL_CONSUMER_SECRET,
+    mode: mode,
+});
 
-// ── Get OAuth Token ──────────────────────────────────────────
-async function getToken() {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
-    return cachedToken;
-  }
+let cachedIpnId = null;
 
-  const res = await fetch(BASE_URL + '/api/Auth/RequestToken', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body:    JSON.stringify({
-      consumer_key:    CONSUMER_KEY,
-      consumer_secret: CONSUMER_SECRET,
-    }),
-  });
-
-  const data = await res.json();
-
-  if (!data.token) {
-    throw new Error('Pesapal auth failed: ' + JSON.stringify(data));
-  }
-
-  cachedToken  = data.token;
-  tokenExpiry  = Date.now() + (4 * 60 * 60 * 1000); // 4 hours
-  console.log('[PESAPAL] Token obtained successfully');
-  return cachedToken;
-}
-
-// ── Register IPN ─────────────────────────────────────────────
-async function registerIPN(callbackUrl) {
-  const token = await getToken();
-
-  const res = await fetch(BASE_URL + '/api/URLSetup/RegisterIPN', {
-    method:  'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Accept':        'application/json',
-      'Authorization': 'Bearer ' + token,
-    },
-    body: JSON.stringify({
-      url:          callbackUrl,
-      ipn_notification_type: 'GET',
-    }),
-  });
-
-  const data = await res.json();
-  console.log('[PESAPAL] IPN registered:', data.ipn_id);
-  return data.ipn_id;
-}
-
-// ── Submit Order ─────────────────────────────────────────────
-async function submitOrder(order) {
-  const token = await getToken();
-  console.log('[PESAPAL] Submitting order:', JSON.stringify(order));
-
-  const res = await fetch(BASE_URL + '/api/Transactions/SubmitOrderRequest', {
-    method:  'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Accept':        'application/json',
-      'Authorization': 'Bearer ' + token,
-    },
-    body: JSON.stringify(order),
-  });
-
-  const data = await res.json();
-
-  if (!data.redirect_url) {
-    throw new Error('Pesapal order failed: ' + JSON.stringify(data));
-  }
-
-  console.log('[PESAPAL] Order submitted successfully, redirect URL:', data.redirect_url);
-  return data;
-}
-
-// ── Get Transaction Status ───────────────────────────────────
-async function getTransactionStatus(orderTrackingId) {
-  const token = await getToken();
-
-  const res = await fetch(
-    BASE_URL + '/api/Transactions/GetTransactionStatus?orderTrackingId=' + orderTrackingId,
-    {
-      headers: {
-        'Accept':        'application/json',
-        'Authorization': 'Bearer ' + token,
-      },
+// ── Get or Register IPN ──────────────────────────────────────────
+async function getIpnId(callbackUrl) {
+    if (cachedIpnId) {
+        console.log('[PESAPAL] Using cached IPN ID:', cachedIpnId);
+        return cachedIpnId;
     }
-  );
 
-  const data = await res.json();
-  console.log('[PESAPAL] Transaction status retrieved for:', orderTrackingId, '| Status:', data.payment_status_description);
-  return data;
+    try {
+        // Try to find existing IPN for this URL
+        const ipnList = await pesapal.getIpnList();
+        const existingIpn = ipnList.find(ipn => ipn.url === callbackUrl);
+        if (existingIpn) {
+            console.log('[PESAPAL] Found existing IPN:', existingIpn.ipn_id);
+            cachedIpnId = existingIpn.ipn_id;
+            return cachedIpnId;
+        }
+    } catch (error) {
+        console.warn('[PESAPAL] Could not fetch IPN list, registering new one:', error.message);
+    }
+
+    // Register new IPN
+    const ipnId = await pesapal.registerIpnUrl({
+        url: callbackUrl,
+        ipnNotificationType: 'GET'
+    });
+    
+    console.log('[PESAPAL] Registered new IPN:', ipnId);
+    cachedIpnId = ipnId;
+    return ipnId;
 }
 
-module.exports = { getToken, registerIPN, submitOrder, getTransactionStatus };
+// ── Register IPN (alias for getIpnId to maintain compatibility) ──
+async function registerIPN(callbackUrl) {
+    return await getIpnId(callbackUrl);
+}
+
+// ── Submit Order ────────────────────────────────────────────────
+async function submitOrder(orderData) {
+    console.log('[PESAPAL] Submitting order:', JSON.stringify(orderData));
+    
+    try {
+        const response = await pesapal.submitOrderRequest(orderData);
+        console.log('[PESAPAL] Order submitted successfully, redirect URL:', response.redirect_url);
+        return {
+            redirect_url: response.redirect_url,
+            order_tracking_id: response.order_tracking_id
+        };
+    } catch (error) {
+        console.error('[PESAPAL] Submit order error:', error.message);
+        throw error;
+    }
+}
+
+// ── Get Transaction Status ──────────────────────────────────────
+async function getTransactionStatus(orderTrackingId) {
+    console.log('[PESAPAL] Getting transaction status for:', orderTrackingId);
+    
+    try {
+        const status = await pesapal.getTransactionStatus(orderTrackingId);
+        console.log('[PESAPAL] Transaction status:', status.payment_status_description);
+        return status;
+    } catch (error) {
+        console.error('[PESAPAL] Get transaction status error:', error.message);
+        throw error;
+    }
+}
+
+// Export all functions
+module.exports = {
+    pesapalClient: pesapal,
+    getIpnId,
+    registerIPN,
+    submitOrder,
+    getTransactionStatus
+};
