@@ -1,5 +1,15 @@
 'use strict';
 
+// ---------------------------------------------------------------------------
+// FuelSense - Shift Manager
+// Phase 5
+//
+// Manages shift opening/closing, dip vs pump comparison,
+// and per-shift stock reconciliation.
+//
+// Shifts: morning (06:00-14:00), afternoon (14:00-22:00), night (22:00-06:00)
+// ---------------------------------------------------------------------------
+
 const { checkPumpVsDip } = require('./alerts');
 
 const SHIFTS = [
@@ -8,6 +18,9 @@ const SHIFTS = [
   { name: 'night',     start: 22, end: 6  },
 ];
 
+// ---------------------------------------------------------------------------
+// Get current shift name based on hour
+// ---------------------------------------------------------------------------
 function getCurrentShiftName(date = new Date()) {
   const hour = date.getHours();
   if (hour >= 6  && hour < 14) return 'morning';
@@ -15,8 +28,12 @@ function getCurrentShiftName(date = new Date()) {
   return 'night';
 }
 
+// ---------------------------------------------------------------------------
+// Get shift date — night shift belongs to the day it started
+// ---------------------------------------------------------------------------
 function getShiftDate(date = new Date()) {
   const hour = date.getHours();
+  // Night shift after midnight belongs to previous day
   if (hour < 6) {
     const prev = new Date(date);
     prev.setDate(prev.getDate() - 1);
@@ -25,11 +42,16 @@ function getShiftDate(date = new Date()) {
   return date.toISOString().split('T')[0];
 }
 
+// ---------------------------------------------------------------------------
+// Open a shift for a tank
+// Creates the shift record and locks the opening reading
+// ---------------------------------------------------------------------------
 async function openShift(db, tankId, attendantName = null) {
   const now       = new Date();
   const shiftName = getCurrentShiftName(now);
   const shiftDate = getShiftDate(now);
 
+  // Check if shift already open
   const existing = await db.query(
     `SELECT id FROM shifts
       WHERE tank_id = $1
@@ -44,6 +66,7 @@ async function openShift(db, tankId, attendantName = null) {
     return { alreadyOpen: true, shiftId: existing.rows[0].id };
   }
 
+  // Get latest reading as opening reading
   const readingRes = await db.query(
     `SELECT id, nsv_litres FROM atg_readings
       WHERE tank_id = $1
@@ -52,52 +75,49 @@ async function openShift(db, tankId, attendantName = null) {
     [tankId]
   );
 
-const openingReading = readingRes.rows.length ? readingRes.rows[0] : null;
+  if (!readingRes.rows.length) {
+    throw new Error('No readings available to open shift for tank ' + tankId);
+  }
 
-if (openingReading) {
+  const openingReading = readingRes.rows[0];
+
+  // Lock the opening reading
   await db.query(
     'UPDATE atg_readings SET is_locked = TRUE WHERE id = $1',
     [openingReading.id]
   );
-}
 
   const result = await db.query(
     `INSERT INTO shifts
        (tank_id, shift_name, shift_date, started_at,
-        const result = await db.query(
-  `INSERT INTO shifts
-     (tank_id, shift_name, shift_date, started_at,
-      opening_reading_id, opening_nsv,
-      status, attendant_name)
-   VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)
-   RETURNING id`,
-  [
-    tankId, shiftName, shiftDate, now,
-    openingReading ? openingReading.id : null,
-    openingReading ? openingReading.nsv_litres : null,
-    attendantName,
-  ]
-);
+        opening_reading_id, opening_nsv,
         status, attendant_name)
      VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)
      RETURNING id`,
-    [tankId, shiftName, shiftDate, now,
-     openingReading.id, openingReading.nsv_litres,
-     attendantName]
+    [
+      tankId, shiftName, shiftDate, now,
+      openingReading.id, openingReading.nsv_litres,
+      attendantName,
+    ]
   );
 
   console.log('[SHIFTS] Shift opened: ' + shiftName + ' ' + shiftDate + ' | tank: ' + tankId);
 
   return {
-    alreadyOpen: false,
-    shiftId:     result.rows[0].id,
+    alreadyOpen:  false,
+    shiftId:      result.rows[0].id,
     shiftName,
     shiftDate,
-    openingNSV:  parseFloat(openingReading.nsv_litres),
+    openingNSV:   parseFloat(openingReading.nsv_litres),
   };
 }
 
+// ---------------------------------------------------------------------------
+// Close a shift for a tank
+// Calculates dip sales, compares to pump meter, flags discrepancies
+// ---------------------------------------------------------------------------
 async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, notes } = {}) {
+  // Load shift
   const shiftRes = await db.query(
     `SELECT s.*, t.tank_number, t.fuel_type
        FROM shifts s
@@ -114,6 +134,7 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
     throw new Error('Shift ' + shiftId + ' is already ' + shift.status);
   }
 
+  // Get latest reading as closing reading
   const readingRes = await db.query(
     `SELECT id, nsv_litres FROM atg_readings
       WHERE tank_id = $1
@@ -126,6 +147,7 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
 
   const closingReading = readingRes.rows[0];
 
+  // Lock closing reading
   await db.query(
     'UPDATE atg_readings SET is_locked = TRUE WHERE id = $1',
     [closingReading.id]
@@ -134,6 +156,7 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
   const openingNSV = parseFloat(shift.opening_nsv);
   const closingNSV = parseFloat(closingReading.nsv_litres);
 
+  // Get deliveries during this shift
   const delivRes = await db.query(
     `SELECT COALESCE(SUM(received_nsv_litres), 0) AS total
        FROM deliveries
@@ -144,13 +167,17 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
   );
 
   const deliveriesNSV = parseFloat(delivRes.rows[0].total) || 0;
-  const dipSales      = openingNSV + deliveriesNSV - closingNSV;
 
+  // Dip sales = opening + deliveries - closing
+  const dipSales = openingNSV + deliveriesNSV - closingNSV;
+
+  // Pump meter sales
   let pumpSales = null;
   if (pumpMeterOpening != null && pumpMeterClosing != null) {
     pumpSales = pumpMeterClosing - pumpMeterOpening;
   }
 
+  // Variance between pump and dip
   let varianceLitres = null;
   let variancePct    = null;
   let status         = 'closed';
@@ -169,6 +196,7 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
     }
   }
 
+  // Update shift record
   await db.query(
     `UPDATE shifts SET
         ended_at             = NOW(),
@@ -188,7 +216,7 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
       closingNSV.toFixed(3),
       pumpMeterOpening,
       pumpMeterClosing,
-      pumpSales      !== null ? pumpSales.toFixed(3)      : null,
+      pumpSales !== null ? pumpSales.toFixed(3) : null,
       dipSales.toFixed(3),
       varianceLitres !== null ? varianceLitres.toFixed(3) : null,
       variancePct    !== null ? variancePct.toFixed(4)    : null,
@@ -222,6 +250,9 @@ async function closeShift(db, shiftId, { pumpMeterOpening, pumpMeterClosing, not
   };
 }
 
+// ---------------------------------------------------------------------------
+// Get shifts for a tank
+// ---------------------------------------------------------------------------
 async function getShifts(db, tankId, limit = 30) {
   const result = await db.query(
     `SELECT
@@ -242,6 +273,9 @@ async function getShifts(db, tankId, limit = 30) {
   return result.rows;
 }
 
+// ---------------------------------------------------------------------------
+// Get all shifts across all tanks (for dashboard)
+// ---------------------------------------------------------------------------
 async function getAllShifts(db, limit = 50) {
   const result = await db.query(
     `SELECT
