@@ -29,21 +29,6 @@ async function getDb() {
   return db;
 }
 
-// ── Pesapal Initialization ─────────────────────────────────────────────────
-let globalIpnId = null;
-let pesapal = null;
-
-async function initializePesapal() {
-    try {
-        pesapal = require('./pesapal');
-        const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-        globalIpnId = await pesapal.registerIPN(callbackUrl);
-        console.log('[API] Pesapal initialized with IPN:', globalIpnId);
-    } catch (error) {
-        console.error('[API] Pesapal initialization failed:', error.message);
-    }
-}
-
 // ── GET /api/tanks ────────────────────────────────────────────────────────
 app.get('/api/tanks', async (req, res) => {
   try {
@@ -564,7 +549,7 @@ app.post('/api/payments/initiate', async (req, res) => {
 
   try {
     const client = await getDb();
-    const pesapalModule = require('./pesapal');
+    const pesapal = require('./pesapal');
 
     let plan;
     let amount;
@@ -595,8 +580,14 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Use global IPN ID
-    const ipnId = globalIpnId || 'default';
+    // Register IPN for this payment
+    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
@@ -615,7 +606,7 @@ app.post('/api/payments/initiate', async (req, res) => {
       },
     };
 
-    const pesapalRes = await pesapalModule.submitOrder(order);
+    const pesapalRes = await pesapal.submitOrder(order);
 
     // Update payment with Pesapal order ID
     await client.query(
@@ -648,7 +639,7 @@ app.post('/api/payments/test', async (req, res) => {
 
   try {
     const client = await getDb();
-    const pesapalModule = require('./pesapal');
+    const pesapal = require('./pesapal');
 
     // Get a valid station ID - if station_id is 'test' or invalid, use the first station
     let realStationId = station_id;
@@ -675,8 +666,14 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Use global IPN ID
-    const ipnId = globalIpnId || 'default';
+    // Register IPN for this test payment
+    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
@@ -695,7 +692,7 @@ app.post('/api/payments/test', async (req, res) => {
       },
     };
 
-    const pesapalRes = await pesapalModule.submitOrder(order);
+    const pesapalRes = await pesapal.submitOrder(order);
 
     await client.query(
       `UPDATE payments SET pesapal_order_id = $1 WHERE id = $2`,
@@ -720,9 +717,9 @@ app.get('/api/payments/callback', async (req, res) => {
 
   try {
     const client  = await getDb();
-    const pesapalModule = require('./pesapal');
+    const pesapal = require('./pesapal');
 
-    const status = await pesapalModule.getTransactionStatus(OrderTrackingId);
+    const status = await pesapal.getTransactionStatus(OrderTrackingId);
 
     if (status.payment_status_description === 'Completed') {
       // Update payment
@@ -805,9 +802,6 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
 });
-
-// ── Initialize Pesapal after database connection ──────────────────────────
-getDb().then(() => initializePesapal());
 
 // ── Ingestion Scheduler ───────────────────────────────────────────────────
 setTimeout(async () => {
