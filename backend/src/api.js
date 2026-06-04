@@ -597,13 +597,15 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN for this payment
+    // ALWAYS register a fresh IPN - do NOT use cache
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
     let ipnId = 'default';
     try {
       ipnId = await pesapal.registerIPN(callbackUrl);
+      console.log('[PAYMENT] Fresh IPN registered:', ipnId);
     } catch (e) {
-      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+      console.error('[PESAPAL] IPN registration failed:', e.message);
+      return res.status(500).json({ error: 'IPN registration failed: ' + e.message });
     }
 
     // Submit order to Pesapal
@@ -658,10 +660,8 @@ app.post('/api/payments/test', async (req, res) => {
     const client = await getDb();
     const pesapal = require('./pesapal');
 
-    // Get a valid station ID - if station_id is 'test' or invalid, use the first station
+    // Get a valid station ID
     let realStationId = station_id;
-    
-    // Check if station_id is 'test' or not a valid UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!station_id || station_id === 'test' || !uuidRegex.test(station_id)) {
       const stationRes = await client.query(`SELECT id FROM stations LIMIT 1`);
@@ -683,13 +683,15 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN for this test payment
+    // ALWAYS register a fresh IPN
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
     let ipnId = 'default';
     try {
       ipnId = await pesapal.registerIPN(callbackUrl);
+      console.log('[TEST PAYMENT] Fresh IPN registered:', ipnId);
     } catch (e) {
-      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+      console.error('[PESAPAL] IPN registration failed:', e.message);
+      return res.status(500).json({ error: 'IPN registration failed: ' + e.message });
     }
 
     // Submit order to Pesapal
@@ -785,7 +787,7 @@ app.get('/api/payments/callback', async (req, res) => {
       console.log('[PESAPAL] Payment completed for station:', payment?.station_id);
     }
 
-    // UPDATED: Redirect to frontend with tab=payment-result parameter
+    // Redirect to frontend with tab=payment-result parameter
     const redirectUrl = `${process.env.FRONTEND_URL}/?tab=payment-result&status=${encodeURIComponent(status.payment_status_description)}&OrderTrackingId=${OrderTrackingId}`;
     res.redirect(redirectUrl);
 
