@@ -7,7 +7,6 @@ function Pricing({ api, activeStation, session, darkMode }) {
   const [loading,      setLoading]      = useState(false);
   const [selected,     setSelected]     = useState(null);
   const [error,        setError]        = useState(null);
-  const [testLoading,  setTestLoading]  = useState(false);
 
   const bg   = darkMode ? '#1e1e2e' : '#fff';
   const text = darkMode ? '#e0e0e0' : '#1a1a2e';
@@ -38,7 +37,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
       // For test payment, override amount and force monthly billing
       if (isTest) {
         payload.test_amount = plan.price_monthly;
-        payload.billing_cycle = 'monthly'; // Force monthly for test payments
+        payload.billing_cycle = 'monthly';
       }
       
       console.log('[PRICING] Sending payload:', payload);
@@ -67,46 +66,6 @@ function Pricing({ api, activeStation, session, darkMode }) {
     }
     setLoading(false);
     setSelected(null);
-  }
-
-  // Direct test payment handler - UPDATED with real station ID
-  async function handleDirectTest() {
-    setTestLoading(true);
-    setError(null);
-    try {
-      console.log('[PRICING] Sending direct test payment for KES 100');
-      
-      // Use the real station ID from your database
-      const REAL_STATION_ID = "a0000000-0000-0000-0000-000000000001";
-      
-      const res = await fetch(api + '/api/payments/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          station_id: REAL_STATION_ID,  // Use real UUID from your database
-          amount: 100,
-          user_email: session?.user?.email,
-          user_name: session?.user?.email?.split('@')[0],
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || 'Direct test payment failed');
-      }
-      
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
-      } else {
-        alert('Error: ' + JSON.stringify(data));
-      }
-    } catch (err) {
-      console.error('Direct test error:', err);
-      setError(err.message);
-      alert('Payment error: ' + err.message);
-    }
-    setTestLoading(false);
   }
 
   const statusColor = {
@@ -241,49 +200,6 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
       <div style={{ textAlign: 'center', fontSize: '12px', color: sub, marginTop: '24px' }}>
         All plans include a 14-day free trial. Cancel anytime. Setup fee KES 25,000 applies.
-      </div>
-
-      {/* Test payment button — remove in production */}
-      <div style={{ marginTop: '24px', padding: '16px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #ffc107' }}>
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 100)</div>
-        <div style={{ fontSize: '12px', color: '#856404', marginBottom: '12px' }}>
-          Use this to verify the payment flow works end to end.
-        </div>
-        <button
-          style={{ ...styles.subscribeBtn, background: '#f39c12', width: 'auto', padding: '8px 20px' }}
-          onClick={() => {
-            if (plans && plans.length > 0) {
-              // Use the actual plan ID from the first plan, not "test"
-              const testPlan = { 
-                ...plans[0], 
-                id: plans[0].id,  // Use real UUID from database
-                price_monthly: '100', 
-                price_annual: '100' 
-              };
-              handleSubscribe(testPlan, true);
-            } else {
-              alert('Please wait for plans to load before testing');
-            }
-          }}
-          disabled={loading || !plans || plans.length === 0}
-        >
-          Test Pay KES 100
-        </button>
-      </div>
-
-      {/* DIRECT TEST payment button — bypass plan system */}
-      <div style={{ marginTop: '16px', padding: '16px', background: '#d1ecf1', borderRadius: '8px', border: '1px solid #bee5eb' }}>
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#0c5460', marginBottom: '8px' }}>🔧 DIRECT TEST (Bypasses Plan System)</div>
-        <div style={{ fontSize: '12px', color: '#0c5460', marginBottom: '12px' }}>
-          This button calls /api/payments/test directly with KES 100 using real station ID.
-        </div>
-        <button
-          style={{ ...styles.subscribeBtn, background: '#17a2b8', width: 'auto', padding: '8px 20px' }}
-          onClick={handleDirectTest}
-          disabled={testLoading || !activeStation}
-        >
-          {testLoading ? 'Processing...' : '🔧 DIRECT Test Pay KES 100'}
-        </button>
       </div>
     </div>
   );
