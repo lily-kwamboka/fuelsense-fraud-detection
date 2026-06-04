@@ -15,6 +15,7 @@ import AlertsPanel from './components/AlertsPanel';
 import ShiftManager from './components/ShiftManager';
 import PumpVsDip from './components/PumpVsDip';
 import Pricing from './components/Pricing';
+import PaymentResult from './components/PaymentResult';
 import useIsMobile from './useIsMobile';
 import { useAuditLog } from './useAuditLog';
 import { useToast } from './Toast';
@@ -244,6 +245,7 @@ function App() {
               {activeTab === 'alerts'         && '🔔 Alerts'}
               {activeTab === 'audit'          && '🔍 Audit Log'}
               {activeTab === 'pricing'        && '💳 Subscription & Billing'}
+              {activeTab === 'payment-result' && '💰 Payment Result'}
               {activeTab === 'reports'        && '📈 Reports'}
             </div>
             {!isMobile && stations.length > 1 && (
@@ -444,17 +446,17 @@ function App() {
 
           {/* ── SHIFTS ── */}
           {activeTab === 'shifts' && (
-            <ShiftManager tanks={tanks} darkMode={darkMode} stationId={activeStation} />
+            <ShiftManager tanks={tanks} darkMode={darkMode} />
           )}
 
           {/* ── PUMP VS DIP ── */}
           {activeTab === 'pump-vs-dip' && (
-            <PumpVsDip darkMode={darkMode} stationId={activeStation} />
+            <PumpVsDip darkMode={darkMode} />
           )}
 
           {/* ── ALERTS ── */}
           {activeTab === 'alerts' && (
-            <AlertsPanel darkMode={darkMode} stationId={activeStation} />
+            <AlertsPanel darkMode={darkMode} />
           )}
 
           {/* ── AUDIT LOG ── */}
@@ -476,6 +478,11 @@ function App() {
                 darkMode={darkMode}
               />
             </div>
+          )}
+
+          {/* ── PAYMENT RESULT ── */}
+          {activeTab === 'payment-result' && (
+            <PaymentResult darkMode={darkMode} />
           )}
 
           {/* ── REPORTS ── */}
