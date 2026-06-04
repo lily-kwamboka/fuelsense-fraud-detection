@@ -7,6 +7,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
   const [loading,      setLoading]      = useState(false);
   const [selected,     setSelected]     = useState(null);
   const [error,        setError]        = useState(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const bg   = darkMode ? '#1e1e2e' : '#fff';
   const text = darkMode ? '#e0e0e0' : '#1a1a2e';
@@ -81,10 +82,13 @@ function Pricing({ api, activeStation, session, darkMode }) {
     cancelled: 'Cancelled',
   };
 
-  // Calculate days remaining
+  // Calculate days remaining (supports both trial and active subscriptions)
   const getDaysRemaining = () => {
-    if (!subscription || !subscription.current_period_end) return null;
-    const endDate = new Date(subscription.current_period_end);
+    if (!subscription) return null;
+    const endDate = subscription.trial_ends_at 
+      ? new Date(subscription.trial_ends_at) 
+      : (subscription.current_period_end ? new Date(subscription.current_period_end) : null);
+    if (!endDate) return null;
     const today = new Date();
     const diffTime = endDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -92,6 +96,11 @@ function Pricing({ api, activeStation, session, darkMode }) {
   };
 
   const daysRemaining = getDaysRemaining();
+  const isTrial = subscription?.status === 'trial';
+  const isAboutToExpire = daysRemaining !== null && daysRemaining <= 3 && daysRemaining > 0;
+
+  // Get available plans for upgrade (excluding current plan)
+  const availablePlans = plans.filter(p => p.name !== subscription?.plan_name);
 
   return (
     <div>
@@ -129,6 +138,49 @@ function Pricing({ api, activeStation, session, darkMode }) {
             </div>
           </div>
 
+          {/* Trial warning banner - shown when 3 days or less remaining */}
+          {isTrial && isAboutToExpire && (
+            <div style={{
+              marginTop: '16px',
+              padding: '12px 16px',
+              background: '#fff3cd',
+              border: '1px solid #ffc107',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '20px' }}>⚠️</span>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404' }}>
+                    Your trial ends in {daysRemaining} day{daysRemaining !== 1 ? 's' : ''}!
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#856404' }}>
+                    Upgrade now to avoid service interruption.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowUpgradeModal(true)}
+                style={{
+                  background: '#f39c12',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '8px 20px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}
+              >
+                Upgrade Now
+              </button>
+            </div>
+          )}
+
           {/* Subscription details */}
           <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${darkMode ? '#2a2a3e' : '#e0e0e0'}` }}>
             {subscription.trial_ends_at && subscription.status === 'trial' && (
@@ -138,6 +190,11 @@ function Pricing({ api, activeStation, session, darkMode }) {
                   <div style={{ fontSize: '13px', fontWeight: '500', color: text }}>Trial Period Active</div>
                   <div style={{ fontSize: '12px', color: sub }}>
                     Trial ends: {new Date(subscription.trial_ends_at).toLocaleDateString()}
+                    {daysRemaining !== null && daysRemaining > 0 && (
+                      <span style={{ marginLeft: '8px', color: daysRemaining <= 3 ? '#e74c3c' : '#27ae60' }}>
+                        ({daysRemaining} day{daysRemaining !== 1 ? 's' : ''} remaining)
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -172,16 +229,139 @@ function Pricing({ api, activeStation, session, darkMode }) {
               </div>
             )}
           </div>
+
+          {/* Upgrade button for active subscriptions */}
+          {subscription.status === 'active' && availablePlans.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              <button
+                onClick={() => setShowUpgradeModal(true)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${statusColor[subscription.status] || '#27ae60'}`,
+                  color: statusColor[subscription.status] || '#27ae60',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: '500',
+                  width: '100%'
+                }}
+              >
+                Change Plan / Upgrade
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Upgrade Modal */}
+      {showUpgradeModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowUpgradeModal(false)}>
+          <div style={{
+            background: bg,
+            borderRadius: '16px',
+            padding: '24px',
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            position: 'relative'
+          }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowUpgradeModal(false)}
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                background: 'none',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: sub
+              }}
+            >✕</button>
+            
+            <h3 style={{ color: text, marginBottom: '20px' }}>Upgrade Your Plan</h3>
+            <p style={{ color: sub, marginBottom: '20px', fontSize: '13px' }}>
+              Current plan: <strong>{subscription?.plan_name}</strong>
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {plans.filter(p => p.name !== subscription?.plan_name).map(plan => {
+                const price = billing === 'annual' ? plan.price_annual : plan.price_monthly;
+                return (
+                  <div key={plan.id} style={{
+                    padding: '16px',
+                    border: `1px solid ${darkMode ? '#2a2a3e' : '#e0e0e0'}`,
+                    borderRadius: '12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <div style={{ fontSize: '16px', fontWeight: '600', color: text }}>{plan.name}</div>
+                        <div style={{ fontSize: '13px', color: sub }}>KES {parseInt(price).toLocaleString()}/{billing === 'annual' ? 'year' : 'month'}</div>
+                      </div>
+                      <button
+                        onClick={() => handleSubscribe(plan, false)}
+                        disabled={loading}
+                        style={{
+                          background: '#4CAF50',
+                          color: '#fff',
+                          border: 'none',
+                          padding: '8px 20px',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '13px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        {loading && selected === plan.id ? 'Processing...' : 'Upgrade'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            
+            {subscription?.billing_cycle && (
+              <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                <button
+                  onClick={() => setBilling(billing === 'monthly' ? 'annual' : 'monthly')}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#4CAF50',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  Switch to {billing === 'monthly' ? 'Annual' : 'Monthly'} billing
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* Show upgrade prompt if subscription exists */}
-      {subscription && subscription.status === 'active' && (
+      {subscription && subscription.status === 'active' && !showUpgradeModal && (
         <div style={{ ...styles.infoBox, marginBottom: '20px', background: darkMode ? '#1a2a1a' : '#e8f5e9' }}>
           <span style={{ fontSize: '16px' }}>✅</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '13px', fontWeight: '500', color: '#27ae60' }}>Your subscription is active</div>
-            <div style={{ fontSize: '12px', color: sub }}>Need to upgrade or change your plan? Contact support.</div>
+            <div style={{ fontSize: '12px', color: sub }}>Need to upgrade or change your plan? Click "Change Plan" above.</div>
           </div>
         </div>
       )}
@@ -272,7 +452,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
       )}
 
       {/* If subscription is active, show a message instead of plans */}
-      {subscription && subscription.status === 'active' && (
+      {subscription && subscription.status === 'active' && !showUpgradeModal && (
         <div style={{ ...styles.subCard, background: bg, textAlign: 'center', padding: '40px' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
           <div style={{ fontSize: '18px', fontWeight: '600', color: text, marginBottom: '8px' }}>
@@ -283,7 +463,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
             <strong>{new Date(subscription.current_period_end).toLocaleDateString()}</strong>
           </div>
           <div style={{ fontSize: '12px', color: sub }}>
-            Need to upgrade or make changes? Please contact our support team.
+            Need to upgrade or make changes? Click "Change Plan / Upgrade" above.
           </div>
         </div>
       )}
