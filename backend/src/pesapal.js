@@ -12,9 +12,22 @@ const BASE_URL = IS_SANDBOX
 
 console.log('[PESAPAL] Environment:', IS_SANDBOX ? 'SANDBOX' : 'LIVE', '| Base URL:', BASE_URL);
 
-// Always get a fresh token - no caching
+let cachedToken = null;
+let tokenExpiry = null;
+
+// Refresh token 5 minutes before expiry (3 hours 55 minutes)
+const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
+
 async function getToken() {
-  console.log('[PESAPAL] Requesting fresh token...');
+  const now = Date.now();
+  
+  // Check if we have a valid cached token (with buffer)
+  if (cachedToken && tokenExpiry && (now + REFRESH_BUFFER_MS) < tokenExpiry) {
+    console.log('[PESAPAL] Using cached token (valid for', Math.round((tokenExpiry - now) / 1000 / 60), 'more minutes)');
+    return cachedToken;
+  }
+
+  console.log('[PESAPAL] Requesting new token...');
   
   const res = await fetch(BASE_URL + '/api/Auth/RequestToken', {
     method: 'POST',
@@ -32,8 +45,11 @@ async function getToken() {
     throw new Error('Pesapal auth failed: ' + JSON.stringify(data));
   }
 
-  console.log('[PESAPAL] Token obtained successfully');
-  return data.token;
+  cachedToken = data.token;
+  tokenExpiry = Date.now() + (4 * 60 * 60 * 1000); // 4 hours from now
+  
+  console.log('[PESAPAL] New token obtained, valid until:', new Date(tokenExpiry).toLocaleTimeString());
+  return cachedToken;
 }
 
 async function registerIPN(callbackUrl) {
@@ -59,8 +75,7 @@ async function registerIPN(callbackUrl) {
 }
 
 async function submitOrder(order) {
-  const token = await getToken(); // Always get fresh token
-  console.log('[PESAPAL] Got fresh token, length:', token.length);
+  const token = await getToken();
   console.log('[PESAPAL] Submitting order:', JSON.stringify(order));
 
   const payload = {
@@ -70,7 +85,6 @@ async function submitOrder(order) {
 
   const url = `${BASE_URL}/api/Transactions/SubmitOrderRequest`;
   console.log('[PESAPAL] Request URL:', url);
-  console.log('[PESAPAL] Authorization: Bearer', token.substring(0, 20) + '...');
 
   const res = await fetch(url, {
     method: 'POST',
@@ -88,7 +102,11 @@ async function submitOrder(order) {
   console.log('[PESAPAL] Raw response (first 500 chars):', text.substring(0, 500));
 
   if (res.status === 401) {
-    throw new Error('Pesapal authentication failed on SubmitOrder. Check that your API key has SubmitOrder permission.');
+    // If token is rejected, force refresh on next request
+    console.log('[PESAPAL] Token rejected, clearing cache for next request');
+    cachedToken = null;
+    tokenExpiry = null;
+    throw new Error('Pesapal authentication failed on SubmitOrder. Token may have expired.');
   }
 
   if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
