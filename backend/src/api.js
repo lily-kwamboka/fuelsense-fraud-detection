@@ -6,6 +6,7 @@ const cors       = require('cors');
 const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
+const { Resend } = require('resend');
 
 const app          = express();
 const PORT         = process.env.API_PORT || 3001;
@@ -13,6 +14,9 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 app.use(cors());
 app.use(express.json());
+
+// Initialize Resend for email notifications (if API key is set)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // ── Simple test endpoint for deployment verification ────────────────────────
 app.get('/api/ping', (req, res) => {
@@ -32,7 +36,8 @@ app.get('/api/debug-pesapal', (req, res) => {
     consumer_key_exists: !!process.env.PESAPAL_CONSUMER_KEY,
     consumer_secret_exists: !!process.env.PESAPAL_CONSUMER_SECRET,
     api_base_url: process.env.API_BASE_URL,
-    frontend_url: process.env.FRONTEND_URL
+    frontend_url: process.env.FRONTEND_URL,
+    email_notifications: !!resend
   });
 });
 
@@ -44,6 +49,101 @@ async function getDb() {
   await db.connect();
   console.log('[API] Database connected');
   return db;
+}
+
+// ── Send renewal reminder email ─────────────────────────────────────────────
+async function sendRenewalReminder(stationId, daysLeft, userEmail, planName) {
+  console.log(`[EMAIL REMINDER] Station: ${stationId} | Email: ${userEmail} | Plan: ${planName} | Renews in: ${daysLeft} days`);
+  
+  // Send email if Resend is configured
+  if (resend) {
+    try {
+      await resend.emails.send({
+        from: 'FuelSense <noreply@fuelsense.com>',
+        to: userEmail,
+        subject: `Your ${planName} plan renews in ${daysLeft} days`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: #1a1a2e; padding: 20px; text-align: center;">
+              <h1 style="color: #4CAF50; margin: 0;">⛽ FuelSense</h1>
+              <p style="color: #fff; margin: 5px 0 0;">Mafuta Salama</p>
+            </div>
+            <div style="padding: 20px; border: 1px solid #e0e0e0;">
+              <h2>Subscription Renewal Reminder</h2>
+              <p>Your <strong>${planName}</strong> plan for station ${stationId} will renew in <strong>${daysLeft} days</strong>.</p>
+              <p>To manage your subscription or update payment method, please visit your billing page.</p>
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${process.env.FRONTEND_URL}/?tab=pricing" style="background: #4CAF50; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Manage Subscription</a>
+              </div>
+              <p style="font-size: 12px; color: #666;">If you have any questions, please contact our support team.</p>
+            </div>
+            <div style="background: #f5f5f5; padding: 10px; text-align: center; font-size: 11px; color: #666;">
+              &copy; 2026 FuelSense. All rights reserved.
+            </div>
+          </div>
+        `
+      });
+      console.log(`[EMAIL] Sent renewal reminder to ${userEmail}`);
+    } catch (err) {
+      console.error(`[EMAIL] Failed to send renewal reminder to ${userEmail}:`, err.message);
+    }
+  } else {
+    console.log(`[EMAIL] Resend not configured - would have sent reminder to ${userEmail}`);
+  }
+}
+
+// ── Check for upcoming renewals and send reminders ──────────────────────────
+async function checkUpcomingRenewals() {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT s.id, s.station_id, s.plan_name, s.billing_cycle, s.current_period_end,
+              st.name as station_name, up.email as user_email
+       FROM subscriptions s
+       JOIN stations st ON st.id = s.station_id
+       JOIN user_profiles up ON up.station_id = s.station_id
+       WHERE s.status = 'active'
+         AND s.current_period_end > NOW()
+         AND s.current_period_end < NOW() + INTERVAL '7 days'
+       ORDER BY s.current_period_end ASC`
+    );
+    
+    if (result.rows.length) {
+      console.log(`[CRON] Found ${result.rows.length} subscription(s) renewing soon:`);
+      for (const sub of result.rows) {
+        const daysLeft = Math.ceil((new Date(sub.current_period_end) - new Date()) / (1000 * 60 * 60 * 24));
+        console.log(`  - Station: ${sub.station_name} (${sub.plan_name}) | Days left: ${daysLeft} | Email: ${sub.user_email}`);
+        
+        // Send reminder email
+        await sendRenewalReminder(sub.station_id, daysLeft, sub.user_email, sub.plan_name);
+      }
+    }
+  } catch (err) {
+    console.error('[CRON] Error checking upcoming renewals:', err.message);
+  }
+}
+
+// ── Auto-expire subscriptions cron job ──────────────────────────────────────
+async function checkExpiredSubscriptions() {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE subscriptions 
+       SET status = 'expired' 
+       WHERE status = 'active' 
+         AND current_period_end < NOW()
+       RETURNING station_id`
+    );
+    
+    if (result.rows.length) {
+      console.log(`[CRON] Expired ${result.rows.length} subscription(s):`);
+      result.rows.forEach(row => {
+        console.log(`  - Station ID: ${row.station_id}`);
+      });
+    }
+  } catch (err) {
+    console.error('[CRON] Error checking expired subscriptions:', err.message);
+  }
 }
 
 // ── GET /api/tanks ────────────────────────────────────────────────────────
@@ -810,6 +910,22 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
 });
+
+// ── Auto-expire subscriptions cron job (runs every hour) ───────────────────
+setInterval(async () => {
+  await checkExpiredSubscriptions();
+}, 60 * 60 * 1000); // Every hour
+
+// ── Check upcoming renewals and send reminders (runs every 6 hours) ─────────
+setInterval(async () => {
+  await checkUpcomingRenewals();
+}, 6 * 60 * 60 * 1000); // Every 6 hours
+
+// Run once on startup
+setTimeout(async () => {
+  await checkExpiredSubscriptions();
+  await checkUpcomingRenewals();
+}, 5000); // Run 5 seconds after startup
 
 // ── Ingestion Scheduler ───────────────────────────────────────────────────
 setTimeout(async () => {

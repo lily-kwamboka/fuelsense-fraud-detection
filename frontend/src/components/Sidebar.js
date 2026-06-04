@@ -1,18 +1,30 @@
 import React from 'react';
 
-const navItems = [
-  { id: 'dashboard',      icon: '📊', label: 'Dashboard' },
-  { id: 'deliveries',     icon: '🚚', label: 'Deliveries' },
-  { id: 'reconciliation', icon: '📋', label: 'Reconciliation' },
-  { id: 'reports',        icon: '📈', label: 'Reports' },
-  { id: 'audit',          icon: '🔍', label: 'Audit Log' },
-  { id: 'shifts',      icon: '⏱',  label: 'Shifts' },
-  { id: 'pump-vs-dip', icon: '🔢', label: 'Pump vs Dip' },
-  { id: 'alerts',      icon: '🔔', label: 'Alerts' },
-  { id: 'pricing',        icon: '💳', label: 'Billing' },
-];
+function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut, alertCount, subscription }) {
+  
+  const isExpired = subscription?.status === 'expired';
+  const isActive = subscription?.status === 'active' || subscription?.status === 'trial';
+  
+  // Define which nav items are available based on subscription status
+  const allNavItems = [
+    { id: 'dashboard',      icon: '📊', label: 'Dashboard', requiresActive: true },
+    { id: 'deliveries',     icon: '🚚', label: 'Deliveries', requiresActive: true },
+    { id: 'reconciliation', icon: '📋', label: 'Reconciliation', requiresActive: true },
+    { id: 'shifts',         icon: '⏱',  label: 'Shifts', requiresActive: true },
+    { id: 'pump-vs-dip',    icon: '🔢', label: 'Pump vs Dip', requiresActive: true },
+    { id: 'alerts',         icon: '🔔', label: 'Alerts', requiresActive: true },
+    { id: 'audit',          icon: '🔍', label: 'Audit Log', requiresActive: true },
+    { id: 'reports',        icon: '📈', label: 'Reports', requiresActive: true },
+    { id: 'pricing',        icon: '💳', label: 'Billing', requiresActive: false }, // Always visible
+  ];
+  
+  // Filter nav items based on subscription status
+  const navItems = allNavItems.filter(item => {
+    // If subscription is expired, hide features that require active subscription
+    if (isExpired && item.requiresActive) return false;
+    return true;
+  });
 
-function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut }) {
   return (
     <div style={{ ...styles.sidebar, background: darkMode ? '#0f0f1a' : '#1a1a2e' }}>
 
@@ -24,6 +36,13 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
           <div style={styles.logoSub}>Mafuta Salama</div>
         </div>
       </div>
+
+      {/* Expired warning badge */}
+      {isExpired && (
+        <div style={styles.expiredBadge}>
+          ⚠️ Subscription Expired
+        </div>
+      )}
 
       {/* Nav items */}
       <nav style={styles.nav}>
@@ -38,8 +57,18 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
               borderLeft: activeTab === item.id
                 ? '3px solid #4CAF50'
                 : '3px solid transparent',
+              opacity: isExpired && item.requiresActive ? 0.5 : 1,
+              cursor: isExpired && item.requiresActive ? 'not-allowed' : 'pointer',
             }}
-            onClick={() => setActiveTab(item.id)}
+            onClick={() => {
+              // Don't allow navigation to restricted features if expired
+              if (isExpired && item.requiresActive) {
+                return;
+              }
+              setActiveTab(item.id);
+            }}
+            disabled={isExpired && item.requiresActive}
+            title={isExpired && item.requiresActive ? 'Renew subscription to access this feature' : ''}
           >
             <span style={styles.navIcon}>{item.icon}</span>
             <span style={styles.navLabel}>{item.label}</span>
@@ -94,6 +123,17 @@ const styles = {
   userEmail:   { color: '#fff', fontSize: '12px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   userRole:    { color: '#888', fontSize: '10px', marginTop: '1px' },
   signOutBtn:  { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '16px', padding: '4px' },
+  expiredBadge: { 
+    margin: '12px 16px', 
+    padding: '8px 12px', 
+    background: '#fdecea', 
+    color: '#e74c3c', 
+    borderRadius: '8px', 
+    fontSize: '11px', 
+    fontWeight: '600',
+    textAlign: 'center',
+    border: '1px solid #f5c6cb'
+  },
 };
 
 export default Sidebar;

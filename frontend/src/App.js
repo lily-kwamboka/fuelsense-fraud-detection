@@ -16,6 +16,7 @@ import ShiftManager from './components/ShiftManager';
 import PumpVsDip from './components/PumpVsDip';
 import Pricing from './components/Pricing';
 import PaymentResult from './components/PaymentResult';
+import AccessDenied from './components/AccessDenied';
 import useIsMobile from './useIsMobile';
 import { useAuditLog } from './useAuditLog';
 import { useToast } from './Toast';
@@ -34,6 +35,7 @@ function App() {
   const [showForm,       setShowForm]    = useState(false);
   const [darkMode,       setDarkMode]    = useState(false);
   const [alertSummary,   setAlertSummary] = useState({ critical: 0, warning: 0, info: 0 });
+  const [subscription,   setSubscription] = useState(null);
   const isMobile = useIsMobile();
   const { addToast } = useToast();
   const [stations,       setStations]      = useState([]);
@@ -62,17 +64,50 @@ function App() {
     
     if (tabParam === 'payment-result') {
       setActiveTab('payment-result');
-      // Store payment status in sessionStorage for the result page
       if (statusParam) {
         sessionStorage.setItem('paymentStatus', statusParam);
       }
       if (orderIdParam) {
         sessionStorage.setItem('orderTrackingId', orderIdParam);
       }
-      // Clean up URL without reloading the page
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  // Fetch subscription for current station
+  useEffect(() => {
+    if (activeStation) {
+      fetch(API + '/api/subscription?station_id=' + activeStation)
+        .then(res => res.json())
+        .then(data => setSubscription(data))
+        .catch(console.error);
+    }
+  }, [API, activeStation]);
+
+  // Check access and redirect if expired
+  useEffect(() => {
+    if (activeStation && subscription && subscription.status === 'expired') {
+      addToast('⚠️ Your subscription has expired. Please renew to access features.', 'error', 8000);
+      if (activeTab !== 'pricing' && activeTab !== 'payment-result') {
+        setActiveTab('pricing');
+      }
+    }
+  }, [subscription, activeStation, addToast, activeTab]);
+
+  // Check if station has access to features
+  const hasStationAccess = () => {
+    if (!subscription) return true;
+    if (subscription.status === 'active') return true;
+    if (subscription.status === 'trial') return true;
+    if (subscription.status === 'expired') return false;
+    return true;
+  };
+
+  // Get current station name
+  const getCurrentStationName = () => {
+    const station = stations.find(s => s.id === activeStation);
+    return station?.name || 'Unknown Station';
+  };
 
   async function loadUserProfile() {
     if (!session) return;
@@ -145,7 +180,6 @@ function App() {
       const init = async () => {
         const profile = await loadUserProfile();
         await loadStations(profile);
-        // Log sign in
         try {
           await fetch(API + '/api/audit-log', {
             method:  'POST',
@@ -167,7 +201,6 @@ function App() {
       };
       init();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   useEffect(() => {
@@ -176,7 +209,6 @@ function App() {
       const interval = setInterval(loadData, 60000);
       return () => clearInterval(interval);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, activeStation]);
 
   async function handleSignOut() {
@@ -210,6 +242,10 @@ function App() {
   };
 
   const totalOpenAlerts = alertSummary.critical + alertSummary.warning + alertSummary.info;
+  const hasAccess = hasStationAccess();
+  const isExpired = subscription?.status === 'expired';
+  const shouldShowContent = hasAccess || activeTab === 'pricing' || activeTab === 'payment-result';
+  const shouldShowAccessDenied = isExpired && activeTab !== 'pricing' && activeTab !== 'payment-result';
 
   if (authLoading) {
     return (
@@ -238,6 +274,7 @@ function App() {
           user={session.user}
           onSignOut={handleSignOut}
           alertCount={totalOpenAlerts}
+          subscription={subscription}
         />
       )}
 
@@ -295,6 +332,18 @@ function App() {
                 🔔 {totalOpenAlerts} alert{totalOpenAlerts > 1 ? 's' : ''}
               </button>
             )}
+            {isExpired && (
+              <span style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '99px',
+                background: '#fdecea',
+                color: '#e74c3c',
+                fontWeight: '600',
+              }}>
+                ⚠️ EXPIRED
+              </span>
+            )}
             {lastUpdated && !isMobile && (
               <div style={{ fontSize: '12px', color: colors.subtext }}>
                 Updated {lastUpdated}
@@ -332,194 +381,200 @@ function App() {
         {/* Page content */}
         <div style={{ ...styles.content, padding: isMobile ? '12px' : '24px' }}>
 
-          {/* ── DASHBOARD ── */}
-          {activeTab === 'dashboard' && (
-            <div>
-              {alertSummary.critical > 0 && (
-                <div style={styles.alertRed}>
-                  🚨 <strong>{alertSummary.critical} critical alert{alertSummary.critical > 1 ? 's' : ''}</strong> require immediate attention.{' '}
-                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
-                </div>
-              )}
-              {alertSummary.warning > 0 && (
-                <div style={styles.alertAmber}>
-                  ⚠️ <strong>{alertSummary.warning} warning{alertSummary.warning > 1 ? 's' : ''}</strong> need attention.{' '}
-                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
-                </div>
-              )}
-              {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
-                <div key={t.id} style={styles.alertRed}>
-                  🚨 <strong>Tank {t.tank_number}</strong> critically low — {parseFloat(t.fill_pct).toFixed(1)}%
-                </div>
-              ))}
-              {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.water_mm) > 50).map(t => (
-                <div key={t.id} style={styles.alertAmber}>
-                  ⚠️ <strong>Tank {t.tank_number}</strong> high water — {t.water_mm}mm
-                </div>
-              ))}
-
-              {/* Summary cards */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
-                gap: isMobile ? '8px' : '16px',
-                marginBottom: '24px',
-              }}>
-                <SummaryCard label="Total NSV"    value={Array.isArray(tanks) ? tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L' : '0 L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Active Tanks" value={Array.isArray(tanks) ? tanks.length + ' tanks' : '0 tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Deliveries"   value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard
-                  label="Open Alerts"
-                  value={totalOpenAlerts + ' open'}
-                  icon="🔔"
-                  color={totalOpenAlerts > 0 ? (alertSummary.critical > 0 ? '#e74c3c' : '#f39c12') : '#27ae60'}
-                  bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile}
-                  onClick={() => setActiveTab('alerts')}
-                />
-              </div>
-
-              {/* Tank gauges */}
-              <div style={{ ...styles.sectionHeader }}>
-                <div style={{ ...styles.sectionTitle, color: colors.text }}>Live Tank Levels</div>
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
-                gap: '16px',
-              }}>
-                {Array.isArray(tanks) && tanks.map(tank => (
-                  <TankGauge key={tank.id} tank={tank} darkMode={darkMode} />
-                ))}
-              </div>
-
-              {/* Charts */}
-              {!isMobile && Array.isArray(tanks) && tanks.length > 0 && (
-                <>
-                  <div style={{ ...styles.sectionHeader, marginTop: '24px' }}>
-                    <div style={{ ...styles.sectionTitle, color: colors.text }}>NSV Trends — Last Hour</div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' }}>
-                    {tanks.map(tank => (
-                      <TankChart key={tank.id} tank={tank} api={API} darkMode={darkMode} />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+          {/* Show Access Denied for expired stations (except on pricing/payment pages) */}
+          {shouldShowAccessDenied && (
+            <AccessDenied darkMode={darkMode} stationName={getCurrentStationName()} />
           )}
 
-          {/* ── DELIVERIES ── */}
-          {activeTab === 'deliveries' && (
-            <div>
-              <div style={styles.rowBetween}>
-                <div style={{ ...styles.sectionTitle, color: colors.text }}>Delivery Records</div>
-                <button style={styles.newBtn} onClick={() => setShowForm(!showForm)}>
-                  {showForm ? '✕' : '+ New'}
-                </button>
-              </div>
-              {showForm && (
-                <DeliveryForm
-                  tanks={tanks}
-                  onSuccess={() => { setShowForm(false); loadData(); }}
-                  api={API}
-                  stationId={activeStation}
-                  session={session}
-                  userProfile={userProfile}
-                />
-              )}
-
-              {Array.isArray(deliveries) && deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
+          {/* Normal content - only show if not expired OR on allowed pages */}
+          {shouldShowContent && !shouldShowAccessDenied && (
+            <>
+              {/* ── DASHBOARD ── */}
+              {activeTab === 'dashboard' && (
                 <div>
-                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px' }}>
-                    🔄 Active Deliveries
+                  {alertSummary.critical > 0 && (
+                    <div style={styles.alertRed}>
+                      🚨 <strong>{alertSummary.critical} critical alert{alertSummary.critical > 1 ? 's' : ''}</strong> require immediate attention.{' '}
+                      <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
+                    </div>
+                  )}
+                  {alertSummary.warning > 0 && (
+                    <div style={styles.alertAmber}>
+                      ⚠️ <strong>{alertSummary.warning} warning{alertSummary.warning > 1 ? 's' : ''}</strong> need attention.{' '}
+                      <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
+                    </div>
+                  )}
+                  {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
+                    <div key={t.id} style={styles.alertRed}>
+                      🚨 <strong>Tank {t.tank_number}</strong> critically low — {parseFloat(t.fill_pct).toFixed(1)}%
+                    </div>
+                  ))}
+                  {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.water_mm) > 50).map(t => (
+                    <div key={t.id} style={styles.alertAmber}>
+                      ⚠️ <strong>Tank {t.tank_number}</strong> high water — {t.water_mm}mm
+                    </div>
+                  ))}
+
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+                    gap: isMobile ? '8px' : '16px',
+                    marginBottom: '24px',
+                  }}>
+                    <SummaryCard label="Total NSV"    value={Array.isArray(tanks) ? tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L' : '0 L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                    <SummaryCard label="Active Tanks" value={Array.isArray(tanks) ? tanks.length + ' tanks' : '0 tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                    <SummaryCard label="Deliveries"   value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                    <SummaryCard
+                      label="Open Alerts"
+                      value={totalOpenAlerts + ' open'}
+                      icon="🔔"
+                      color={totalOpenAlerts > 0 ? (alertSummary.critical > 0 ? '#e74c3c' : '#f39c12') : '#27ae60'}
+                      bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile}
+                      onClick={() => setActiveTab('alerts')}
+                    />
                   </div>
-                  {deliveries
-                    .filter(d => !['confirmed', 'flagged'].includes(d.status))
-                    .map(d => (
-                      <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
+
+                  <div style={{ ...styles.sectionHeader }}>
+                    <div style={{ ...styles.sectionTitle, color: colors.text }}>Live Tank Levels</div>
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+                    gap: '16px',
+                  }}>
+                    {Array.isArray(tanks) && tanks.map(tank => (
+                      <TankGauge key={tank.id} tank={tank} darkMode={darkMode} />
                     ))}
+                  </div>
+
+                  {!isMobile && Array.isArray(tanks) && tanks.length > 0 && (
+                    <>
+                      <div style={{ ...styles.sectionHeader, marginTop: '24px' }}>
+                        <div style={{ ...styles.sectionTitle, color: colors.text }}>NSV Trends — Last Hour</div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' }}>
+                        {tanks.map(tank => (
+                          <TankChart key={tank.id} tank={tank} api={API} darkMode={darkMode} />
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
-              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px', marginTop: '24px' }}>
-                📋 Delivery History
-              </div>
-              {Array.isArray(deliveries) && deliveries.filter(d => ['confirmed', 'flagged'].includes(d.status)).length > 0 ? (
-                deliveries
-                  .filter(d => ['confirmed', 'flagged'].includes(d.status))
-                  .map(d => (
-                    <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
-                  ))
-              ) : (
-                <DeliveryList deliveries={deliveries} />
+              {/* ── DELIVERIES ── */}
+              {activeTab === 'deliveries' && (
+                <div>
+                  <div style={styles.rowBetween}>
+                    <div style={{ ...styles.sectionTitle, color: colors.text }}>Delivery Records</div>
+                    <button style={styles.newBtn} onClick={() => setShowForm(!showForm)}>
+                      {showForm ? '✕' : '+ New'}
+                    </button>
+                  </div>
+                  {showForm && (
+                    <DeliveryForm
+                      tanks={tanks}
+                      onSuccess={() => { setShowForm(false); loadData(); }}
+                      api={API}
+                      stationId={activeStation}
+                      session={session}
+                      userProfile={userProfile}
+                    />
+                  )}
+
+                  {Array.isArray(deliveries) && deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
+                    <div>
+                      <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px' }}>
+                        🔄 Active Deliveries
+                      </div>
+                      {deliveries
+                        .filter(d => !['confirmed', 'flagged'].includes(d.status))
+                        .map(d => (
+                          <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
+                        ))}
+                    </div>
+                  )}
+
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px', marginTop: '24px' }}>
+                    📋 Delivery History
+                  </div>
+                  {Array.isArray(deliveries) && deliveries.filter(d => ['confirmed', 'flagged'].includes(d.status)).length > 0 ? (
+                    deliveries
+                      .filter(d => ['confirmed', 'flagged'].includes(d.status))
+                      .map(d => (
+                        <DeliveryTimeline key={d.id} delivery={d} darkMode={darkMode} />
+                      ))
+                  ) : (
+                    <DeliveryList deliveries={deliveries} />
+                  )}
+                </div>
               )}
-            </div>
-          )}
 
-          {/* ── RECONCILIATION ── */}
-          {activeTab === 'reconciliation' && (
-            <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>Daily Reconciliation</div>
-              <PumpSalesForm tanks={tanks} api={API} onSuccess={loadData} stationId={activeStation} />
-              <ReconciliationTable data={reconciliation} />
-            </div>
-          )}
+              {/* ── RECONCILIATION ── */}
+              {activeTab === 'reconciliation' && (
+                <div>
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>Daily Reconciliation</div>
+                  <PumpSalesForm tanks={tanks} api={API} onSuccess={loadData} stationId={activeStation} />
+                  <ReconciliationTable data={reconciliation} />
+                </div>
+              )}
 
-          {/* ── SHIFTS ── */}
-          {activeTab === 'shifts' && (
-            <ShiftManager tanks={tanks} darkMode={darkMode} />
-          )}
+              {/* ── SHIFTS ── */}
+              {activeTab === 'shifts' && (
+                <ShiftManager tanks={tanks} darkMode={darkMode} />
+              )}
 
-          {/* ── PUMP VS DIP ── */}
-          {activeTab === 'pump-vs-dip' && (
-            <PumpVsDip darkMode={darkMode} />
-          )}
+              {/* ── PUMP VS DIP ── */}
+              {activeTab === 'pump-vs-dip' && (
+                <PumpVsDip darkMode={darkMode} />
+              )}
 
-          {/* ── ALERTS ── */}
-          {activeTab === 'alerts' && (
-            <AlertsPanel darkMode={darkMode} />
-          )}
+              {/* ── ALERTS ── */}
+              {activeTab === 'alerts' && (
+                <AlertsPanel darkMode={darkMode} />
+              )}
 
-          {/* ── AUDIT LOG ── */}
-          {activeTab === 'audit' && (
-            <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>🔍 Audit Log</div>
-              <AuditLog api={API} activeStation={activeStation} darkMode={darkMode} />
-            </div>
-          )}
+              {/* ── AUDIT LOG ── */}
+              {activeTab === 'audit' && (
+                <div>
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>🔍 Audit Log</div>
+                  <AuditLog api={API} activeStation={activeStation} darkMode={darkMode} />
+                </div>
+              )}
 
-          {/* ── PRICING ── */}
-          {activeTab === 'pricing' && (
-            <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>💳 Subscription & Billing</div>
-              <Pricing
-                api={API}
-                activeStation={activeStation}
-                session={session}
-                darkMode={darkMode}
-              />
-            </div>
-          )}
+              {/* ── PRICING ── */}
+              {activeTab === 'pricing' && (
+                <div>
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>💳 Subscription & Billing</div>
+                  <Pricing
+                    api={API}
+                    activeStation={activeStation}
+                    session={session}
+                    darkMode={darkMode}
+                  />
+                </div>
+              )}
 
-          {/* ── PAYMENT RESULT ── */}
-          {activeTab === 'payment-result' && (
-            <PaymentResult darkMode={darkMode} />
-          )}
+              {/* ── PAYMENT RESULT ── */}
+              {activeTab === 'payment-result' && (
+                <PaymentResult darkMode={darkMode} />
+              )}
 
-          {/* ── REPORTS ── */}
-          {activeTab === 'reports' && (
-            <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>📈 Reports & Exports</div>
-              <Reports
-                deliveries={deliveries}
-                reconciliation={reconciliation}
-                tanks={tanks}
-                darkMode={darkMode}
-                stationId={activeStation}
-              />
-            </div>
+              {/* ── REPORTS ── */}
+              {activeTab === 'reports' && (
+                <div>
+                  <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>📈 Reports & Exports</div>
+                  <Reports
+                    deliveries={deliveries}
+                    reconciliation={reconciliation}
+                    tanks={tanks}
+                    darkMode={darkMode}
+                    stationId={activeStation}
+                  />
+                </div>
+              )}
+            </>
           )}
-
         </div>
       </div>
     </div>
