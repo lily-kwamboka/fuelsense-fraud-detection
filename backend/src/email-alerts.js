@@ -12,33 +12,72 @@
 
 const { Resend } = require('resend');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM   = process.env.ALERT_FROM_EMAIL || 'alerts@mafutasalama.co.ke';
-const TO     = process.env.ALERT_TO_EMAIL   || '';
+let resend = null;
+let lastAlertSent = {};
+
+// Initialize Resend if API key is available
+if (process.env.RESEND_API_KEY) {
+  resend = new Resend(process.env.RESEND_API_KEY);
+  console.log('[EMAIL] Resend initialized for alerts');
+}
+
+const FROM = process.env.ALERT_FROM_EMAIL || 'alerts@mafutasalama.co.ke';
+const TO   = process.env.ALERT_TO_EMAIL   || process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com';
+
+// ── Helper Functions ──────────────────────────────────────────────────────────
+
+function shouldSendAlert(alertKey, cooldownMinutes = 60) {
+  const lastSent = lastAlertSent[alertKey];
+  if (!lastSent) return true;
+  const minutesSince = (Date.now() - lastSent) / (1000 * 60);
+  return minutesSince >= cooldownMinutes;
+}
+
+function recordAlertSent(alertKey) {
+  lastAlertSent[alertKey] = Date.now();
+}
+
+function getAlertEmail() {
+  return TO;
+}
 
 /**
  * Send an email alert.
  * @param {string} subject
  * @param {string} htmlBody
+ * @param {boolean} useCooldown
+ * @param {string} alertKey
  */
-async function sendAlert(subject, htmlBody) {
+async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null) {
   if (!TO) {
-    console.warn('[EMAIL] ALERT_TO_EMAIL not set — skipping email alert');
+    console.warn('[EMAIL] Alert email not set — skipping email alert');
+    return;
+  }
+
+  if (useCooldown && alertKey && !shouldSendAlert(alertKey)) {
+    console.log(`[EMAIL] Skipping duplicate alert for key: ${alertKey}`);
+    return;
+  }
+
+  if (!resend) {
+    console.log(`[EMAIL] Would send alert: ${subject}`);
+    if (useCooldown && alertKey) recordAlertSent(alertKey);
     return;
   }
 
   try {
     const { data, error } = await resend.emails.send({
-      from:    FROM,
-      to:      TO.split(',').map(e => e.trim()),
+      from: FROM,
+      to: TO.split(',').map(e => e.trim()),
       subject: `[FuelSense] ${subject}`,
-      html:    wrapHTML(subject, htmlBody),
+      html: wrapHTML(subject, htmlBody),
     });
 
     if (error) {
       console.error('[EMAIL] Failed to send alert:', error);
     } else {
       console.log('[EMAIL] Alert sent:', subject, '→', data.id);
+      if (useCooldown && alertKey) recordAlertSent(alertKey);
     }
   } catch (err) {
     console.error('[EMAIL] Error sending alert:', err.message);
@@ -91,25 +130,29 @@ function wrapHTML(title, content) {
 // ── Alert types ──────────────────────────────────────────────────────────────
 
 /**
- * Low stock alert — tank below 20%
+ * Low stock alert — tank below threshold (default 20%)
  */
-async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres) {
-  await sendAlert(
-    `⚠️ Low Stock — Tank ${tankNumber} (${fuelType.toUpperCase()})`,
-    `
+async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationName = 'Station') {
+  const alertKey = `low_stock_${tankNumber}`;
+  
+  const content = `
     <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#856404;">⚠️ Tank ${tankNumber} is running low</strong>
     </div>
     <table style="width:100%;border-collapse:collapse;">
       <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Tank</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType.toUpperCase()}</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType?.toUpperCase() || 'Unknown'}</td>
       </tr>
       <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Current Level</td>
         <td style="padding:10px 0;color:#e74c3c;font-weight:700;font-size:16px;">${parseFloat(fillPct).toFixed(1)}%</td>
       </tr>
-      <tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">NSV Remaining</td>
         <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${parseFloat(nsvLitres).toFixed(0)} litres</td>
       </tr>
@@ -117,26 +160,31 @@ async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres) {
     <p style="color:#856404;font-size:13px;margin-top:16px;">
       <strong>Action required:</strong> Schedule a fuel delivery immediately to avoid stock-out.
     </p>
-    `
-  );
+  `;
+  
+  await sendAlert(`⚠️ Low Stock — Tank ${tankNumber} (${fuelType?.toUpperCase() || 'Unknown'})`, content, true, alertKey);
 }
 
 /**
- * High water alert — water level above 50mm
+ * High water alert — water level above threshold (default 50mm)
  */
-async function alertHighWater(tankNumber, fuelType, waterMm) {
-  await sendAlert(
-    `🚨 High Water Level — Tank ${tankNumber}`,
-    `
+async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Station') {
+  const alertKey = `high_water_${tankNumber}`;
+  
+  const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🚨 High water detected in Tank ${tankNumber}</strong>
     </div>
     <table style="width:100%;border-collapse:collapse;">
       <tr style="border-bottom:1px solid #f0f0f0;">
-        <td style="padding:10px 0;color:#666;font-size:13px;">Tank</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType.toUpperCase()}</td>
+        <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
       </tr>
-      <tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:10px 0;color:#666;font-size:13px;">Tank</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType?.toUpperCase() || 'Unknown'}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Water Level</td>
         <td style="padding:10px 0;color:#e74c3c;font-weight:700;font-size:16px;">${parseFloat(waterMm).toFixed(1)} mm</td>
       </tr>
@@ -144,84 +192,84 @@ async function alertHighWater(tankNumber, fuelType, waterMm) {
     <p style="color:#721c24;font-size:13px;margin-top:16px;">
       <strong>Action required:</strong> Inspect the tank immediately. Water contamination can damage equipment and fuel quality.
     </p>
-    `
-  );
+  `;
+  
+  await sendAlert(`🚨 High Water Level — Tank ${tankNumber}`, content, true, alertKey);
 }
 
 /**
  * Delivery flagged alert
  */
-async function alertDeliveryFlagged(delivery) {
-  const variance    = parseFloat(delivery.variance_litres || 0);
-  const variancePct = parseFloat(delivery.variance_pct || 0);
-
-  await sendAlert(
-    `🚨 Delivery Flagged — ${delivery.bol_number}`,
-    `
+async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName = 'Station') {
+  const alertKey = `flagged_delivery_${bolNumber}`;
+  const varianceLitres = parseFloat(variance || 0);
+  const variancePct = Math.abs((varianceLitres / 100) * 100);
+  
+  const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🚨 Delivery variance exceeds tolerance</strong>
     </div>
     <table style="width:100%;border-collapse:collapse;">
       <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">BOL Number</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${delivery.bol_number}</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${bolNumber}</td>
       </tr>
       <tr style="border-bottom:1px solid #f0f0f0;">
-        <td style="padding:10px 0;color:#666;font-size:13px;">Supplier</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${delivery.supplier_name}</td>
-      </tr>
-      <tr style="border-bottom:1px solid #f0f0f0;">
-        <td style="padding:10px 0;color:#666;font-size:13px;">BOL NSV</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${parseFloat(delivery.bol_nsv_litres).toFixed(0)} L</td>
-      </tr>
-      <tr style="border-bottom:1px solid #f0f0f0;">
-        <td style="padding:10px 0;color:#666;font-size:13px;">Received NSV</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${parseFloat(delivery.received_nsv_litres).toFixed(0)} L</td>
+        <td style="padding:10px 0;color:#666;font-size:13px;">Fuel Type</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${fuelType?.toUpperCase() || 'Unknown'}</td>
       </tr>
       <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Variance</td>
         <td style="padding:10px 0;color:#e74c3c;font-weight:700;font-size:16px;">
-          ${variance > 0 ? '+' : ''}${variance.toFixed(0)} L (${variancePct.toFixed(3)}%)
+          ${varianceLitres > 0 ? '+' : ''}${varianceLitres.toFixed(0)} L (${variancePct.toFixed(3)}%)
         </td>
-      </tr>
-      <tr>
-        <td style="padding:10px 0;color:#666;font-size:13px;">Classification</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${(delivery.variance_classification || '').replace(/_/g, ' ')}</td>
       </tr>
     </table>
     <p style="color:#721c24;font-size:13px;margin-top:16px;">
       <strong>Action required:</strong> Review the delivery records and contact the supplier to dispute the variance.
     </p>
-    `
-  );
+  `;
+  
+  await sendAlert(`🚨 Delivery Flagged — ${bolNumber}`, content, true, alertKey);
 }
 
 /**
  * Reading gap alert — ATG offline
  */
-async function alertReadingGap(message) {
-  await sendAlert(
-    '🔴 ATG Offline — Reading Gap Detected',
-    `
+async function alertReadingGap(message, stationName = 'Station') {
+  const alertKey = `atg_offline_${stationName}`;
+  
+  const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🔴 ATG probe is not sending readings</strong>
     </div>
-    <p style="color:#1a1a2e;font-size:13px;">${message}</p>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
+      </tr>
+    </table>
+    <p style="color:#1a1a2e;font-size:13px;margin-top:16px;">${message}</p>
     <p style="color:#721c24;font-size:13px;margin-top:16px;">
       <strong>Action required:</strong> Check the ATG console, IoT gateway connection, and network connectivity at the station.
     </p>
-    `
-  );
+  `;
+  
+  await sendAlert('🔴 ATG Offline — Reading Gap Detected', content, true, alertKey);
 }
 
 /**
  * Daily reconciliation variance alert
  */
-async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date) {
+async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, stationName = 'Station') {
+  const alertKey = `daily_variance_${tankNumber}_${date}`;
   const isNegative = varianceLitres < 0;
-  await sendAlert(
-    `📋 Daily Variance Alert — Tank ${tankNumber}`,
-    `
+  
+  const content = `
     <div style="background:${isNegative ? '#fdecea' : '#fff3cd'};border:1px solid ${isNegative ? '#f5c6cb' : '#ffc107'};border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:${isNegative ? '#721c24' : '#856404'};">
         ${isNegative ? '📉 Unaccounted fuel loss detected' : '📈 Unexpected fuel gain detected'}
@@ -229,17 +277,21 @@ async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date) {
     </div>
     <table style="width:100%;border-collapse:collapse;">
       <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Date</td>
         <td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${date}</td>
       </tr>
       <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Tank</td>
-        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType.toUpperCase()}</td>
+        <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">Tank ${tankNumber} — ${fuelType?.toUpperCase() || 'Unknown'}</td>
       </tr>
-      <tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
         <td style="padding:10px 0;color:#666;font-size:13px;">Daily Variance</td>
         <td style="padding:10px 0;font-weight:700;font-size:16px;color:${isNegative ? '#e74c3c' : '#f39c12'};">
-          ${varianceLitres > 0 ? '+' : ''}${varianceLitres.toFixed(0)} L
+          ${varianceLitres > 0 ? '+' : ''}${Math.abs(varianceLitres).toFixed(0)} L
         </td>
       </tr>
     </table>
@@ -248,14 +300,48 @@ async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date) {
         ? 'Investigate possible leak, theft, or meter fault.'
         : 'Verify pump sales figures and delivery records for this date.'}
     </p>
-    `
-  );
+  `;
+  
+  await sendAlert(`📋 Daily Variance Alert — Tank ${tankNumber}`, content, true, alertKey);
+}
+
+/**
+ * Test Alert (for debugging)
+ */
+async function sendTestAlert() {
+  console.log('[EMAIL] Sending test alert...');
+  
+  if (!resend) {
+    console.error('[EMAIL] Resend not configured. Add RESEND_API_KEY to environment variables.');
+    return false;
+  }
+
+  const content = `
+    <div style="background:#d4edda;border:1px solid #c3e6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <strong style="color:#155724;">✅ This is a test email from FuelSense</strong>
+    </div>
+    <p style="color:#1a1a2e;font-size:13px;">If you received this, email notifications are working correctly!</p>
+    <p style="color:#1a1a2e;font-size:13px;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+  `;
+  
+  await sendAlert('🧪 Test Alert', content, false);
+  console.log('[EMAIL] Test alert sent successfully');
+  return true;
+}
+
+// Export legacy function names for backward compatibility
+async function alertDeliveryFlagged(delivery) {
+  return alertFlaggedDelivery(delivery.bol_number, delivery.variance_litres, delivery.fuel_type);
 }
 
 module.exports = {
+  // New functions
   alertLowStock,
   alertHighWater,
-  alertDeliveryFlagged,
+  alertFlaggedDelivery,
   alertReadingGap,
   alertDailyVariance,
+  sendTestAlert,
+  // Legacy aliases for backward compatibility
+  alertDeliveryFlagged,
 };

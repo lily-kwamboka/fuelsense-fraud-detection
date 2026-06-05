@@ -18,6 +18,20 @@ app.use(express.json());
 // Initialize Resend for email notifications (if API key is set)
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+// ── Role-Based Access Control Helper ────────────────────────────────────────
+function getRoleAccessLevel(role) {
+  const accessLevels = {
+    'owner': 100,              // Full system access
+    'headquarters': 80,       // View all stations, no user management
+    'supervisor': 70,         // Manage multiple stations
+    'compliance_officer': 65, // Audit all stations (read-only)
+    'station_manager': 50,    // Single station full access
+    'shift_supervisor': 30,   // View only, can manage shifts
+    'attendant': 10           // Basic read-only
+  };
+  return accessLevels[role] || 0;
+}
+
 // ── Simple test endpoint for deployment verification ────────────────────────
 app.get('/api/ping', (req, res) => {
   res.json({ message: 'pong', timestamp: new Date().toISOString() });
@@ -39,6 +53,19 @@ app.get('/api/debug-pesapal', (req, res) => {
     frontend_url: process.env.FRONTEND_URL,
     email_notifications: !!resend
   });
+});
+
+// ── POST /api/alerts/test ────────────────────────────────────────────────────
+app.post('/api/alerts/test', async (req, res) => {
+  const { sendTestAlert } = require('./email-alerts');
+  
+  const success = await sendTestAlert();
+  
+  if (success) {
+    res.json({ message: 'Test alert sent successfully', email: process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com' });
+  } else {
+    res.status(500).json({ error: 'Failed to send test alert. Check RESEND_API_KEY configuration.' });
+  }
 });
 
 let db = null;
@@ -147,8 +174,8 @@ async function checkExpiredSubscriptions() {
 // ── GET /api/tanks ────────────────────────────────────────────────────────
 app.get('/api/tanks', async (req, res) => {
   try {
-    const client      = await getDb();
-    const stationId   = req.query.station_id;
+    const client = await getDb();
+    const stationId = req.query.station_id;
     const supabaseUid = req.query.uid;
 
     let query = `
@@ -187,14 +214,25 @@ app.get('/api/tanks', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-      if (userRes.rows.length && userRes.rows[0].role === 'manager' && userRes.rows[0].station_id) {
-        params.push(userRes.rows[0].station_id);
-        query += ` WHERE t.station_id = $${params.length}`;
+      
+      if (userRes.rows.length) {
+        const role = userRes.rows[0].role;
+        const accessLevel = getRoleAccessLevel(role);
+        const assignedStation = userRes.rows[0].station_id;
+        
+        // Owner, Headquarters, Supervisor, Compliance Officer see all stations
+        if (accessLevel >= 65) {
+          // No station filter - see everything
+        }
+        // Others see only their assigned station
+        else if (assignedStation) {
+          params.push(assignedStation);
+          query += ` WHERE t.station_id = $${params.length}`;
+        }
       }
     }
 
     query += ` ORDER BY s.name, t.tank_number`;
-
     const result = await client.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -217,9 +255,21 @@ app.get('/api/stations', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-      if (userRes.rows.length && userRes.rows[0].role === 'manager' && userRes.rows[0].station_id) {
-        params.push(userRes.rows[0].station_id);
-        query = `SELECT id, name, location FROM stations WHERE id = $1`;
+      
+      if (userRes.rows.length) {
+        const role = userRes.rows[0].role;
+        const accessLevel = getRoleAccessLevel(role);
+        const assignedStation = userRes.rows[0].station_id;
+        
+        // Owner, Headquarters, Supervisor, Compliance Officer see all stations
+        if (accessLevel >= 65) {
+          // No station filter - see all stations
+        }
+        // Others see only their assigned station
+        else if (assignedStation) {
+          params.push(assignedStation);
+          query = `SELECT id, name, location FROM stations WHERE id = $1`;
+        }
       }
     }
 
@@ -247,7 +297,7 @@ app.get('/api/user-profile', async (req, res) => {
     );
 
     if (!result.rows.length) {
-      return res.json({ role: 'manager', station_id: null });
+      return res.json({ role: 'attendant', station_id: null });
     }
 
     res.json(result.rows[0]);
