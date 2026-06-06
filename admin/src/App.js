@@ -17,7 +17,7 @@ const navItems = [
   { id: 'suppliers',icon: '🚚', label: 'Suppliers' },
 ];
 
-const ALLOWED_ROLES = ['admin', 'owner', 'headquarters'];
+const ALLOWED_ROLES = ['admin', 'owner', 'headquarters', 'station_manager'];
 
 export default function App() {
   const [session,      setSession]      = useState(null);
