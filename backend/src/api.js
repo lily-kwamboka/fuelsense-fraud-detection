@@ -1,15 +1,15 @@
 require('dotenv').config();
 'use strict';
 
-const express    = require('express');
-const cors       = require('cors');
+const express = require('express');
+const cors = require('cors');
 const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
 
-const app          = express();
-const PORT         = process.env.API_PORT || 3001;
+const app = express();
+const PORT = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 app.use(cors());
@@ -58,9 +58,9 @@ app.get('/api/debug-pesapal', (req, res) => {
 // ── POST /api/alerts/test ────────────────────────────────────────────────────
 app.post('/api/alerts/test', async (req, res) => {
   const { sendTestAlert } = require('./email-alerts');
-  
+
   const success = await sendTestAlert();
-  
+
   if (success) {
     res.json({ message: 'Test alert sent successfully', email: process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com' });
   } else {
@@ -81,7 +81,7 @@ async function getDb() {
 // ── Send renewal reminder email ─────────────────────────────────────────────
 async function sendRenewalReminder(stationId, daysLeft, userEmail, planName) {
   console.log(`[EMAIL REMINDER] Station: ${stationId} | Email: ${userEmail} | Plan: ${planName} | Renews in: ${daysLeft} days`);
-  
+
   if (resend) {
     try {
       await resend.emails.send({
@@ -134,7 +134,7 @@ async function checkUpcomingRenewals() {
          AND s.current_period_end < NOW() + INTERVAL '7 days'
        ORDER BY s.current_period_end ASC`
     );
-    
+
     if (result.rows.length) {
       console.log(`[CRON] Found ${result.rows.length} subscription(s) renewing soon:`);
       for (const sub of result.rows) {
@@ -159,7 +159,7 @@ async function checkExpiredSubscriptions() {
          AND current_period_end < NOW()
        RETURNING station_id`
     );
-    
+
     if (result.rows.length) {
       console.log(`[CRON] Expired ${result.rows.length} subscription(s):`);
       result.rows.forEach(row => {
@@ -214,12 +214,12 @@ app.get('/api/tanks', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-      
+
       if (userRes.rows.length) {
         const role = userRes.rows[0].role;
         const accessLevel = getRoleAccessLevel(role);
         const assignedStation = userRes.rows[0].station_id;
-        
+
         // Owner, Headquarters, Supervisor, Compliance Officer see all stations
         if (accessLevel >= 65) {
           // No station filter - see everything
@@ -241,13 +241,148 @@ app.get('/api/tanks', async (req, res) => {
   }
 });
 
+// ── POST /api/tanks ───────────────────────────────────────────────────────
+app.post('/api/tanks', async (req, res) => {
+  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
+
+  if (!station_id || !tank_number || !fuel_type || !capacity_litres) {
+    return res.status(400).json({ error: 'Missing required fields: station_id, tank_number, fuel_type, capacity_litres' });
+  }
+
+  try {
+    const client = await getDb();
+
+    // Check station exists
+    const station = await client.query(
+      'SELECT id FROM stations WHERE id = $1', [station_id]
+    );
+    if (!station.rows.length) {
+      return res.status(404).json({ error: 'Station not found' });
+    }
+
+    // Check tank number is unique for this station
+    const existing = await client.query(
+      'SELECT id FROM tanks WHERE station_id = $1 AND tank_number = $2',
+      [station_id, tank_number]
+    );
+    if (existing.rows.length) {
+      return res.status(400).json({ error: 'Tank number already exists for this station' });
+    }
+
+    const result = await client.query(
+      `INSERT INTO tanks (id, station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [station_id, tank_number, fuel_type, capacity_litres,
+        fuel_density_at_15c || 0.835,
+        low_stock_threshold_pct || 20]
+    );
+
+    console.log('[API] Tank created:', result.rows[0].id);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] POST /api/tanks error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/tanks/:tankId/strapping-upload ──────────────────────────────
+const multer = require('multer');
+const csvParser = require('csv-parser');
+const fs = require('fs');
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/api/tanks/:tankId/strapping-upload', upload.single('file'), async (req, res) => {
+  const { tankId } = req.params;
+  const rows = [];
+
+  try {
+    const client = await getDb();
+
+    // Verify tank exists
+    const tank = await client.query(
+      'SELECT id FROM tanks WHERE id = $1', [tankId]
+    );
+    if (!tank.rows.length) {
+      return res.status(404).json({ error: 'Tank not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Read and parse the CSV file
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(req.file.path)
+        .pipe(csvParser())
+        .on('data', (row) => {
+          // Support both column name formats
+          const depth = parseInt(row.depth_mm || row.Depth_mm || row.depth);
+          const volume = parseFloat(row.volume_litres || row.Volume_litres || row.litres);
+
+          if (!isNaN(depth) && !isNaN(volume)) {
+            rows.push({ depth_mm: depth, volume_litres: volume });
+          }
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    if (rows.length === 0) {
+      return res.status(400).json({
+        error: 'No valid rows found. CSV must have columns: depth_mm, volume_litres'
+      });
+    }
+
+    // Delete existing strapping data for this tank
+    await client.query(
+      'DELETE FROM strapping_table WHERE tank_id = $1', [tankId]
+    );
+
+    // Insert all rows in one transaction
+    await client.query('BEGIN');
+    try {
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO strapping_table (id, tank_id, depth_mm, volume_litres)
+           VALUES (gen_random_uuid(), $1, $2, $3)`,
+          [tankId, row.depth_mm, row.volume_litres]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    }
+
+    // Clean up temp file
+    fs.unlinkSync(req.file.path);
+
+    console.log(`[API] Strapping table uploaded for tank ${tankId}: ${rows.length} rows`);
+    res.json({
+      ok: true,
+      tank_id: tankId,
+      rows_inserted: rows.length,
+      message: `Successfully uploaded ${rows.length} calibration rows`
+    });
+
+  } catch (err) {
+    // Clean up temp file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error('[API] strapping upload error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/stations ─────────────────────────────────────────────────────
 app.get('/api/stations', async (req, res) => {
   try {
-    const client      = await getDb();
+    const client = await getDb();
     const supabaseUid = req.query.uid;
 
-    let query  = `SELECT id, name, location FROM stations ORDER BY name`;
+    let query = `SELECT id, name, location FROM stations ORDER BY name`;
     let params = [];
 
     if (supabaseUid) {
@@ -255,12 +390,12 @@ app.get('/api/stations', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-      
+
       if (userRes.rows.length) {
         const role = userRes.rows[0].role;
         const accessLevel = getRoleAccessLevel(role);
         const assignedStation = userRes.rows[0].station_id;
-        
+
         // Owner, Headquarters, Supervisor, Compliance Officer see all stations
         if (accessLevel >= 65) {
           // No station filter - see all stations
@@ -283,7 +418,7 @@ app.get('/api/stations', async (req, res) => {
 // ── GET /api/user-profile ─────────────────────────────────────────────────
 app.get('/api/user-profile', async (req, res) => {
   try {
-    const client      = await getDb();
+    const client = await getDb();
     const supabaseUid = req.query.uid;
 
     if (!supabaseUid) return res.status(400).json({ error: 'uid required' });
@@ -394,7 +529,7 @@ app.post('/api/deliveries', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: tank_id, supplier_name, bol_number, bol_nsv_litres' });
   }
   try {
-    const client     = await getDb();
+    const client = await getDb();
     const readingRes = await client.query(
       `SELECT id, nsv_litres FROM atg_readings WHERE tank_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
       [tank_id]
@@ -450,24 +585,24 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: tank_id, recon_date, pump_sales_litres' });
   }
   try {
-    const client   = await getDb();
-    const openRes  = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at ASC  LIMIT 1`, [tank_id, recon_date]);
+    const client = await getDb();
+    const openRes = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at ASC  LIMIT 1`, [tank_id, recon_date]);
     const closeRes = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at DESC LIMIT 1`, [tank_id, recon_date]);
 
     if (!openRes.rows.length || !closeRes.rows.length) {
       return res.status(400).json({ error: 'No readings found for this tank on this date' });
     }
 
-    const openingNSV         = parseFloat(openRes.rows[0].nsv_litres);
-    const closingNSV         = parseFloat(closeRes.rows[0].nsv_litres);
-    const delivRes           = await client.query(
+    const openingNSV = parseFloat(openRes.rows[0].nsv_litres);
+    const closingNSV = parseFloat(closeRes.rows[0].nsv_litres);
+    const delivRes = await client.query(
       `SELECT COALESCE(SUM(received_nsv_litres), 0) AS total FROM deliveries WHERE tank_id = $1 AND status IN ('confirmed','flagged') AND stabilisation_at::date = $2::date`,
       [tank_id, recon_date]
     );
-    const deliveriesNSV      = parseFloat(delivRes.rows[0].total) || 0;
-    const sales              = parseFloat(pump_sales_litres);
+    const deliveriesNSV = parseFloat(delivRes.rows[0].total) || 0;
+    const sales = parseFloat(pump_sales_litres);
     const theoreticalClosing = openingNSV + deliveriesNSV - sales;
-    const varianceLitres     = closingNSV - theoreticalClosing;
+    const varianceLitres = closingNSV - theoreticalClosing;
 
     await client.query(
       `INSERT INTO daily_reconciliation (tank_id, recon_date, opening_nsv, closing_nsv, deliveries_nsv, pump_sales_litres, theoretical_closing, variance_litres)
@@ -491,7 +626,7 @@ app.get('/api/alerts', async (req, res) => {
   try {
     const client = await getDb();
     const status = req.query.status || null;
-    const limit  = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 50;
     const alerts = await getAlerts(client, { status, limit });
     res.json(alerts);
   } catch (err) {
@@ -650,10 +785,10 @@ app.post('/api/audit-log', async (req, res) => {
 // ── GET /api/audit-log ──────────────────────────────────────────────────────
 app.get('/api/audit-log', async (req, res) => {
   try {
-    const client    = await getDb();
+    const client = await getDb();
     const stationId = req.query.station_id;
-    const limit     = parseInt(req.query.limit || '50');
-    let query  = `SELECT id, user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address, created_at FROM audit_log`;
+    const limit = parseInt(req.query.limit || '50');
+    let query = `SELECT id, user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address, created_at FROM audit_log`;
     const params = [];
     if (stationId) {
       params.push(stationId);
@@ -684,8 +819,8 @@ app.get('/api/plans', async (req, res) => {
 // ── GET /api/subscription ───────────────────────────────────────────────────
 app.get('/api/subscription', async (req, res) => {
   try {
-    const client     = await getDb();
-    const stationId  = req.query.station_id;
+    const client = await getDb();
+    const stationId = req.query.station_id;
     if (!stationId) return res.status(400).json({ error: 'station_id required' });
 
     const result = await client.query(
@@ -751,18 +886,18 @@ app.post('/api/payments/initiate', async (req, res) => {
 
     // Submit order to Pesapal
     const order = {
-      id:                   paymentId,
-      currency:             'KES',
-      amount:               parseFloat(amount),
-      description:          isTest ? 'FuelSense Test Payment' : `FuelSense ${plan.name} - ${billing_cycle} subscription`,
-      callback_url:         process.env.FRONTEND_URL + '/payment-success',
-      notification_id:      ipnId,
+      id: paymentId,
+      currency: 'KES',
+      amount: parseFloat(amount),
+      description: isTest ? 'FuelSense Test Payment' : `FuelSense ${plan.name} - ${billing_cycle} subscription`,
+      callback_url: process.env.FRONTEND_URL + '/payment-success',
+      notification_id: ipnId,
       billing_address: {
-        email_address:  user_email,
-        phone_number:   phone || '',
-        country_code:   'KE',
-        first_name:     user_name?.split(' ')[0] || 'Customer',
-        last_name:      user_name?.split(' ')[1] || '',
+        email_address: user_email,
+        phone_number: phone || '',
+        country_code: 'KE',
+        first_name: user_name?.split(' ')[0] || 'Customer',
+        last_name: user_name?.split(' ')[1] || '',
       },
     };
 
@@ -775,12 +910,12 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
 
     res.json({
-      payment_id:   paymentId,
+      payment_id: paymentId,
       redirect_url: pesapalRes.redirect_url,
       amount,
-      plan_name:    plan.name,
+      plan_name: plan.name,
       billing_cycle,
-      is_test:      isTest,
+      is_test: isTest,
     });
 
   } catch (err) {
@@ -830,18 +965,18 @@ app.post('/api/payments/test', async (req, res) => {
 
     // Submit order to Pesapal
     const order = {
-      id:                   paymentId,
-      currency:             'KES',
-      amount:               parseFloat(amount),
-      description:          `FuelSense Test Payment - KES ${amount}`,
-      callback_url:         process.env.FRONTEND_URL + '/payment-success',
-      notification_id:      ipnId,
+      id: paymentId,
+      currency: 'KES',
+      amount: parseFloat(amount),
+      description: `FuelSense Test Payment - KES ${amount}`,
+      callback_url: process.env.FRONTEND_URL + '/payment-success',
+      notification_id: ipnId,
       billing_address: {
-        email_address:  user_email,
-        phone_number:   phone || '',
-        country_code:   'KE',
-        first_name:     user_name?.split(' ')[0] || 'Customer',
-        last_name:      user_name?.split(' ')[1] || '',
+        email_address: user_email,
+        phone_number: phone || '',
+        country_code: 'KE',
+        first_name: user_name?.split(' ')[0] || 'Customer',
+        last_name: user_name?.split(' ')[1] || '',
       },
     };
 
@@ -853,7 +988,7 @@ app.post('/api/payments/test', async (req, res) => {
     );
 
     res.json({
-      payment_id:   paymentId,
+      payment_id: paymentId,
       redirect_url: pesapalRes.redirect_url,
       amount,
     });
@@ -869,7 +1004,7 @@ app.get('/api/payments/callback', async (req, res) => {
   const { OrderTrackingId, OrderMerchantReference } = req.query;
 
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const pesapal = require('./pesapal');
 
     const status = await pesapal.getTransactionStatus(OrderTrackingId);
@@ -896,8 +1031,8 @@ app.get('/api/payments/callback', async (req, res) => {
 
         if (plan) {
           // Calculate period
-          const now   = new Date();
-          const end   = new Date(now);
+          const now = new Date();
+          const end = new Date(now);
           if (payment.billing_cycle === 'annual') {
             end.setFullYear(end.getFullYear() + 1);
           } else {
@@ -935,7 +1070,7 @@ app.get('/api/payments/callback', async (req, res) => {
 // ── GET /api/payments/history ───────────────────────────────────────────────
 app.get('/api/payments/history', async (req, res) => {
   try {
-    const client    = await getDb();
+    const client = await getDb();
     const stationId = req.query.station_id;
     if (!stationId) return res.status(400).json({ error: 'station_id required' });
 
@@ -1208,7 +1343,7 @@ setTimeout(async () => {
 
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
-    const STABLE_CYCLES_REQUIRED  = 10;
+    const STABLE_CYCLES_REQUIRED = 10;
 
     async function pollCycle() {
       console.log('[scheduler] Poll cycle started at ' + new Date().toISOString());

@@ -11,6 +11,11 @@ export default function Tanks({ api }) {
     const [filterStation, setFilterStation] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [savedTankId, setSavedTankId] = useState(null); // ← holds the tank id after save
+    const [csvFile, setCsvFile] = useState(null);
+    const [uploading, setUploading] = useState(false);
+    const [uploadResult, setUploadResult] = useState(null);
+    const [uploadError, setUploadError] = useState('');
     const [form, setForm] = useState({
         station_id: '',
         tank_number: '',
@@ -42,6 +47,10 @@ export default function Tanks({ api }) {
 
     function openAdd() {
         setEditing(null);
+        setSavedTankId(null);
+        setCsvFile(null);
+        setUploadResult(null);
+        setUploadError('');
         setForm({
             station_id: filterStation || '',
             tank_number: '',
@@ -56,6 +65,10 @@ export default function Tanks({ api }) {
 
     function openEdit(tank) {
         setEditing(tank);
+        setSavedTankId(tank.id); // existing tank — show upload section immediately
+        setCsvFile(null);
+        setUploadResult(null);
+        setUploadError('');
         setForm({
             station_id: tank.station_id,
             tank_number: tank.tank_number,
@@ -89,12 +102,50 @@ export default function Tanks({ api }) {
             });
             const data = await res.json();
             if (data.error) { setError(data.error); return; }
-            setShowForm(false);
+
+            // Show CSV upload section after tank is saved
+            setSavedTankId(data.id || editing?.id);
             loadData();
         } catch (err) {
             setError('Failed to save tank.');
         } finally {
             setSaving(false);
+        }
+    }
+
+    async function handleCsvUpload() {
+        if (!csvFile) { setUploadError('Please select a CSV file first.'); return; }
+        if (!savedTankId) { setUploadError('Save the tank first before uploading.'); return; }
+
+        setUploading(true);
+        setUploadError('');
+        setUploadResult(null);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', csvFile);
+
+            // Posts to your FuelSense main API (api.js), not admin API
+            const mainApi = api.replace('https://fuelsense-fraud-detection-1.onrender.com', 'api').replace(':3002', ':3001');
+            const res = await fetch(`${mainApi}/api/tanks/${savedTankId}/strapping-upload`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            const data = await res.json();
+            if (data.error) {
+                setUploadError(data.error);
+                return;
+            }
+
+            setUploadResult(data);
+            setCsvFile(null);
+            // Reset file input
+            document.getElementById('csv-upload-input').value = '';
+        } catch (err) {
+            setUploadError('Upload failed. Make sure your API server is running.');
+        } finally {
+            setUploading(false);
         }
     }
 
@@ -240,12 +291,74 @@ export default function Tanks({ api }) {
                             {saving ? 'Saving...' : editing ? 'Update Tank' : 'Add Tank'}
                         </button>
                         <button
-                            onClick={() => setShowForm(false)}
+                            onClick={() => { setShowForm(false); setSavedTankId(null); }}
                             style={{ padding: '9px 20px', background: '#f0f0f0', color: '#333', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
                         >
                             Cancel
                         </button>
                     </div>
+
+                    {/* ── CSV UPLOAD SECTION ── appears after tank is saved ── */}
+                    {savedTankId && (
+                        <div style={{ marginTop: '24px', borderTop: '1px solid #e0e0e0', paddingTop: '20px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a2e', marginBottom: '6px' }}>
+                                📋 Upload Calibration Table (CSV)
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px' }}>
+                                CSV must have two columns: <code>depth_mm</code> and <code>volume_litres</code>
+                            </div>
+
+                            {/* Sample format hint */}
+                            <div style={{ background: '#f8f8f8', borderRadius: '8px', padding: '10px 14px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '11px', color: '#555' }}>
+                                depth_mm,volume_litres<br />
+                                0,0<br />
+                                10,45<br />
+                                20,92<br />
+                                ...
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                <input
+                                    id="csv-upload-input"
+                                    type="file"
+                                    accept=".csv"
+                                    onChange={e => {
+                                        setCsvFile(e.target.files[0]);
+                                        setUploadResult(null);
+                                        setUploadError('');
+                                    }}
+                                    style={{ fontSize: '13px' }}
+                                />
+                                <button
+                                    onClick={handleCsvUpload}
+                                    disabled={uploading || !csvFile}
+                                    style={{
+                                        padding: '9px 18px',
+                                        background: uploading || !csvFile ? '#ccc' : '#1a5276',
+                                        color: '#fff', border: 'none', borderRadius: '8px',
+                                        cursor: uploading || !csvFile ? 'not-allowed' : 'pointer',
+                                        fontSize: '13px', fontWeight: '600'
+                                    }}
+                                >
+                                    {uploading ? 'Uploading...' : '⬆ Upload'}
+                                </button>
+                            </div>
+
+                            {/* Upload error */}
+                            {uploadError && (
+                                <div style={{ background: '#fdecea', color: '#721c24', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '10px' }}>
+                                    ❌ {uploadError}
+                                </div>
+                            )}
+
+                            {/* Upload success */}
+                            {uploadResult && (
+                                <div style={{ background: '#eafaf1', color: '#1e8449', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '10px' }}>
+                                    ✅ {uploadResult.message} ({uploadResult.rows_inserted} rows inserted)
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
