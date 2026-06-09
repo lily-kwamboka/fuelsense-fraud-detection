@@ -7,6 +7,7 @@ const {
   alertLowStock,
   alertHighWater,
   alertDeliveryFlagged,
+  alertDailyVariance,
 } = require('./email-alerts');
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -55,14 +56,32 @@ async function runAlertCheck() {
       }
     }
 
-    // 2. Check flagged deliveries not yet notified
-    const delivRes = await db.query(`
-      SELECT d.*, t.tank_number, t.fuel_type
-        FROM deliveries d
-        JOIN tanks t ON t.id = d.tank_id
-       WHERE d.status = 'flagged'
-         AND d.created_at > NOW() - INTERVAL '24 hours'
-    `);
+    // 2. Check flagged deliveries with automatic fallback
+    let delivRes;
+    try {
+      // Try with delivery_date first
+      delivRes = await db.query(`
+        SELECT d.*, t.tank_number, t.fuel_type
+          FROM deliveries d
+          JOIN tanks t ON t.id = d.tank_id
+         WHERE d.status = 'flagged'
+           AND d.delivery_date > NOW() - INTERVAL '24 hours'
+      `);
+      console.log('[ALERT-CHECK] Using delivery_date column for filtering');
+    } catch (err) {
+      if (err.message.includes('column d.delivery_date does not exist')) {
+        console.log('[ALERT-CHECK] delivery_date column not found, checking all flagged deliveries');
+        // Fallback: check all flagged deliveries without date filter
+        delivRes = await db.query(`
+          SELECT d.*, t.tank_number, t.fuel_type
+            FROM deliveries d
+            JOIN tanks t ON t.id = d.tank_id
+           WHERE d.status = 'flagged'
+        `);
+      } else {
+        throw err;
+      }
+    }
 
     for (const delivery of delivRes.rows) {
       console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number);
@@ -80,7 +99,6 @@ async function runAlertCheck() {
 
     for (const recon of reconRes.rows) {
       console.log('[ALERT-CHECK] High daily variance on Tank', recon.tank_number, recon.variance_litres + 'L');
-      const { alertDailyVariance } = require('./email-alerts');
       await alertDailyVariance(
         recon.tank_number,
         recon.fuel_type,
@@ -90,12 +108,13 @@ async function runAlertCheck() {
     }
 
     console.log('[ALERT-CHECK] Complete.');
+    process.exit(0);
+  } catch (err) {
+    console.error('[ALERT-CHECK] Fatal error:', err.message);
+    process.exit(1);
   } finally {
     await db.end();
   }
 }
 
-runAlertCheck().catch(err => {
-  console.error('[ALERT-CHECK] Fatal error:', err.message);
-  process.exit(1);
-});
+runAlertCheck();
