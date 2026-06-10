@@ -19,7 +19,28 @@ async function runAlertCheck() {
   await db.connect();
 
   try {
-    // 1. Check low stock — tanks below 20%
+    // ── Cooldown helper ──────────────────────────────────────
+    // Returns true if we should send the alert (not sent in last 60 min)
+    async function shouldAlert(alertKey) {
+      const res = await db.query(
+        `SELECT created_at FROM audit_log
+          WHERE action = $1
+            AND created_at > NOW() - INTERVAL '60 minutes'
+          LIMIT 1`,
+        ['ALERT_' + alertKey]
+      );
+      return res.rows.length === 0;
+    }
+
+    async function markAlertSent(alertKey) {
+      await db.query(
+        `INSERT INTO audit_log (user_email, user_role, action, entity_type)
+         VALUES ('system@fuelsense', 'system', $1, 'alert')`,
+        ['ALERT_' + alertKey]
+      );
+    }
+
+    // 1. Check tanks
     const tankRes = await db.query(`
       SELECT t.id, t.tank_number, t.fuel_type, t.capacity_litres,
              r.nsv_litres, r.water_mm, r.innage_mm, r.recorded_at,
@@ -36,69 +57,63 @@ async function runAlertCheck() {
     for (const tank of tankRes.rows) {
       const fillPct = parseFloat(tank.fill_pct);
 
+      // Low stock — max 1 alert per tank per hour
       if (fillPct < 20 && fillPct > 0) {
-        console.log('[ALERT-CHECK] Low stock on Tank', tank.tank_number, fillPct + '%');
-        await alertLowStock(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
+        const key = 'LOW_STOCK_TANK_' + tank.tank_number;
+        if (await shouldAlert(key)) {
+          console.log('[ALERT-CHECK] Low stock Tank', tank.tank_number, fillPct + '%');
+          await alertLowStock(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
+          await markAlertSent(key);
+        } else {
+          console.log('[ALERT-CHECK] Low stock cooldown active for Tank', tank.tank_number);
+        }
       }
 
+      // High water — max 1 alert per tank per hour
       if (parseFloat(tank.water_mm) > 50) {
-        console.log('[ALERT-CHECK] High water on Tank', tank.tank_number, tank.water_mm + 'mm');
-        await alertHighWater(tank.tank_number, tank.fuel_type, tank.water_mm);
+        const key = 'HIGH_WATER_TANK_' + tank.tank_number;
+        if (await shouldAlert(key)) {
+          console.log('[ALERT-CHECK] High water Tank', tank.tank_number, tank.water_mm + 'mm');
+          await alertHighWater(tank.tank_number, tank.fuel_type, tank.water_mm);
+          await markAlertSent(key);
+        } else {
+          console.log('[ALERT-CHECK] High water cooldown active for Tank', tank.tank_number);
+        }
       }
 
+      // Reading gap — last reading older than 10 minutes
       const lastReading = new Date(tank.recorded_at);
       const minutesAgo  = (Date.now() - lastReading.getTime()) / 60000;
       if (minutesAgo > 10) {
-        console.log('[ALERT-CHECK] Reading gap on Tank', tank.tank_number, minutesAgo.toFixed(0) + ' minutes');
-      }
-    }
-
-    // 2. Check flagged deliveries - FIXED VERSION
-    let delivRes;
-    try {
-      // Try common column names
-      const possibleColumns = ['delivery_date', 'created_on', 'delivery_timestamp', 'event_date'];
-      let queryExecuted = false;
-      
-      for (const col of possibleColumns) {
-        try {
-          delivRes = await db.query(`
-            SELECT d.*, t.tank_number, t.fuel_type
-              FROM deliveries d
-              JOIN tanks t ON t.id = d.tank_id
-             WHERE d.status = 'flagged'
-               AND d.${col} > NOW() - INTERVAL '24 hours'
-          `);
-          console.log(`[ALERT-CHECK] Using ${col} column for filtering`);
-          queryExecuted = true;
-          break;
-        } catch (err) {
-          if (!err.message.includes('column d.')) throw err;
-          // Continue to next column
+        const key = 'READING_GAP_TANK_' + tank.tank_number;
+        if (await shouldAlert(key)) {
+          console.log('[ALERT-CHECK] Reading gap Tank', tank.tank_number, minutesAgo.toFixed(0) + ' min');
+          const { alertReadingGap } = require('./email-alerts');
+          await alertReadingGap('Tank ' + tank.tank_number + ' has not sent a reading for ' + minutesAgo.toFixed(0) + ' minutes.');
+          await markAlertSent(key);
         }
       }
-      
-      if (!queryExecuted) {
-        // Fallback: no date filter
-        delivRes = await db.query(`
-          SELECT d.*, t.tank_number, t.fuel_type
-            FROM deliveries d
-            JOIN tanks t ON t.id = d.tank_id
-           WHERE d.status = 'flagged'
-        `);
-        console.log('[ALERT-CHECK] No date column found, checking all flagged deliveries');
-      }
-    } catch (err) {
-      console.error('[ALERT-CHECK] Error in deliveries query:', err.message);
-      throw err;
     }
+
+    // 2. Flagged deliveries — max 1 alert per delivery
+    const delivRes = await db.query(`
+      SELECT d.*, t.tank_number, t.fuel_type
+        FROM deliveries d
+        JOIN tanks t ON t.id = d.tank_id
+       WHERE d.status = 'flagged'
+         AND d.created_at > NOW() - INTERVAL '24 hours'
+    `);
 
     for (const delivery of delivRes.rows) {
-      console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number);
-      await alertDeliveryFlagged(delivery);
+      const key = 'FLAGGED_DELIVERY_' + delivery.id;
+      if (await shouldAlert(key)) {
+        console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number);
+        await alertDeliveryFlagged(delivery);
+        await markAlertSent(key);
+      }
     }
 
-    // 3. Check daily variance > 500L
+    // 3. High daily variance > 500L — max 1 alert per tank per day
     const reconRes = await db.query(`
       SELECT r.*, t.tank_number, t.fuel_type
         FROM daily_reconciliation r
@@ -108,23 +123,26 @@ async function runAlertCheck() {
     `);
 
     for (const recon of reconRes.rows) {
-      console.log('[ALERT-CHECK] High daily variance on Tank', recon.tank_number, recon.variance_litres + 'L');
-      await alertDailyVariance(
-        recon.tank_number,
-        recon.fuel_type,
-        parseFloat(recon.variance_litres),
-        recon.recon_date
-      );
+      const key = 'DAILY_VARIANCE_TANK_' + recon.tank_number + '_' + recon.recon_date;
+      if (await shouldAlert(key)) {
+        console.log('[ALERT-CHECK] High variance Tank', recon.tank_number, recon.variance_litres + 'L');
+        await alertDailyVariance(
+          recon.tank_number,
+          recon.fuel_type,
+          parseFloat(recon.variance_litres),
+          recon.recon_date
+        );
+        await markAlertSent(key);
+      }
     }
 
     console.log('[ALERT-CHECK] Complete.');
-    process.exit(0);
-  } catch (err) {
-    console.error('[ALERT-CHECK] Fatal error:', err.message);
-    process.exit(1);
   } finally {
     await db.end();
   }
 }
 
-runAlertCheck();
+runAlertCheck().catch(err => {
+  console.error('[ALERT-CHECK] Fatal error:', err.message);
+  process.exit(1);
+});
