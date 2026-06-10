@@ -95,13 +95,12 @@ async function runAlertCheck() {
       }
     }
 
-    // 2. Flagged deliveries — max 1 alert per delivery
+    // 2. Flagged deliveries — FIXED: removed created_at
     const delivRes = await db.query(`
       SELECT d.*, t.tank_number, t.fuel_type
         FROM deliveries d
         JOIN tanks t ON t.id = d.tank_id
        WHERE d.status = 'flagged'
-         AND d.created_at > NOW() - INTERVAL '24 hours'
     `);
 
     for (const delivery of delivRes.rows) {
@@ -137,12 +136,13 @@ async function runAlertCheck() {
     }
 
     console.log('[ALERT-CHECK] Complete.');
+    process.exit(0);
+  } catch (err) {
+    console.error('[ALERT-CHECK] Fatal error:', err.message);
+    process.exit(1);
   } finally {
     await db.end();
   }
 }
 
-runAlertCheck().catch(err => {
-  console.error('[ALERT-CHECK] Fatal error:', err.message);
-  process.exit(1);
-});
+runAlertCheck();
