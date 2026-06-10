@@ -8,8 +8,8 @@ console.log('[CLOUD] Starting FuelSense Simulator Service...');
 console.log('[CLOUD] Node version:', process.version);
 console.log('[CLOUD] Environment:', process.env.NODE_ENV || 'development');
 
-// Run your existing simulator
-const simulator = exec('node src/simulator.js');
+// Run your existing simulator - FIXED PATH
+const simulator = exec('node backend/src/simulator.js');
 
 simulator.stdout.on('data', (data) => {
   console.log(`[SIMULATOR] ${data.trim()}`);
@@ -24,7 +24,7 @@ simulator.on('close', (code) => {
   if (code !== 0) {
     console.log('[CLOUD] Restarting simulator in 5 seconds...');
     setTimeout(() => {
-      const restart = exec('node src/simulator.js');
+      const restart = exec('node backend/src/simulator.js');
       restart.stdout.pipe(process.stdout);
       restart.stderr.pipe(process.stderr);
     }, 5000);
