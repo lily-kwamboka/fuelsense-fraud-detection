@@ -6,26 +6,26 @@ import Tanks from './pages/Tanks';
 import Users from './pages/Users';
 import Suppliers from './pages/Suppliers';
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 /* Nothing */
 
 export { API };
 
 const navItems = [
-  { id: 'stations', icon: '🏪', label: 'Stations'  },
-  { id: 'tanks',    icon: '🛢',  label: 'Tanks'     },
-  { id: 'users',    icon: '👥', label: 'Users'     },
-  { id: 'suppliers',icon: '🚚', label: 'Suppliers' },
+  { id: 'stations', icon: '🏪', label: 'Stations' },
+  { id: 'tanks', icon: '🛢', label: 'Tanks' },
+  { id: 'users', icon: '👥', label: 'Users' },
+  { id: 'suppliers', icon: '🚚', label: 'Suppliers' },
 ];
 
 const ALLOWED_ROLES = ['admin', 'owner', 'headquarters', 'station_manager'];
 
 export default function App() {
-  const [session,      setSession]      = useState(null);
-  const [authLoading,  setAuthLoading]  = useState(true);
-  const [activeTab,    setActiveTab]    = useState('stations');
-  const [userProfile,  setUserProfile]  = useState(null);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('stations');
+  const [userProfile, setUserProfile] = useState(null);
   const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
@@ -113,8 +113,8 @@ export default function App() {
                 width: '100%', display: 'flex', alignItems: 'center', gap: '12px',
                 padding: '11px 12px', border: 'none', borderRadius: '8px',
                 cursor: 'pointer', marginBottom: '4px',
-                background:  activeTab === item.id ? 'rgba(255,255,255,0.12)' : 'transparent',
-                borderLeft:  activeTab === item.id ? '3px solid #e74c3c'      : '3px solid transparent',
+                background: activeTab === item.id ? 'rgba(255,255,255,0.12)' : 'transparent',
+                borderLeft: activeTab === item.id ? '3px solid #e74c3c' : '3px solid transparent',
               }}
             >
               <span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>{item.icon}</span>
@@ -153,9 +153,9 @@ export default function App() {
           </div>
         </div>
 
-        {activeTab === 'stations'  && <Stations  api={API} />}
-        {activeTab === 'tanks'     && <Tanks     api={API} />}
-        {activeTab === 'users'     && <Users     api={API} />}
+        {activeTab === 'stations' && <Stations api={API} />}
+        {activeTab === 'tanks' && <Tanks api={API} />}
+        {activeTab === 'users' && <Users api={API} />}
         {activeTab === 'suppliers' && <Suppliers api={API} />}
       </div>
     </div>
