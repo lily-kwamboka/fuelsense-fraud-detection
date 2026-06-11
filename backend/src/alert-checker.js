@@ -8,6 +8,9 @@ const {
   alertHighWater,
   alertDeliveryFlagged,
   alertDailyVariance,
+  sendCriticalAlert,
+  sendOfflineAlert,
+  sendSMS
 } = require('./email-alerts');
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -57,8 +60,19 @@ async function runAlertCheck() {
     for (const tank of tankRes.rows) {
       const fillPct = parseFloat(tank.fill_pct);
 
-      // Low stock — max 1 alert per tank per hour
-      if (fillPct < 20 && fillPct > 0) {
+      // CRITICAL Low Stock (<10%) - Send SMS + Email
+      if (fillPct < 10 && fillPct > 0) {
+        const key = 'CRITICAL_LOW_STOCK_TANK_' + tank.tank_number;
+        if (await shouldAlert(key)) {
+          console.log('[ALERT-CHECK] CRITICAL low stock Tank', tank.tank_number, fillPct + '%');
+          await sendCriticalAlert(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
+          await markAlertSent(key);
+        } else {
+          console.log('[ALERT-CHECK] Critical low stock cooldown active for Tank', tank.tank_number);
+        }
+      }
+      // Warning Low Stock (10-20%) - Email only
+      else if (fillPct < 20 && fillPct >= 10) {
         const key = 'LOW_STOCK_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
           console.log('[ALERT-CHECK] Low stock Tank', tank.tank_number, fillPct + '%');
@@ -69,7 +83,7 @@ async function runAlertCheck() {
         }
       }
 
-      // High water — max 1 alert per tank per hour
+      // High water — Send SMS + Email (critical)
       if (parseFloat(tank.water_mm) > 50) {
         const key = 'HIGH_WATER_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
@@ -81,21 +95,20 @@ async function runAlertCheck() {
         }
       }
 
-      // Reading gap — last reading older than 10 minutes
+      // Reading gap — last reading older than 10 minutes (SMS + Email)
       const lastReading = new Date(tank.recorded_at);
       const minutesAgo  = (Date.now() - lastReading.getTime()) / 60000;
       if (minutesAgo > 10) {
         const key = 'READING_GAP_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
           console.log('[ALERT-CHECK] Reading gap Tank', tank.tank_number, minutesAgo.toFixed(0) + ' min');
-          const { alertReadingGap } = require('./email-alerts');
-          await alertReadingGap('Tank ' + tank.tank_number + ' has not sent a reading for ' + minutesAgo.toFixed(0) + ' minutes.');
+          await sendOfflineAlert(tank.tank_number, minutesAgo.toFixed(0));
           await markAlertSent(key);
         }
       }
     }
 
-    // 2. Flagged deliveries — FIXED: removed created_at
+    // 2. Flagged deliveries — SMS + Email
     const delivRes = await db.query(`
       SELECT d.*, t.tank_number, t.fuel_type
         FROM deliveries d
@@ -108,11 +121,14 @@ async function runAlertCheck() {
       if (await shouldAlert(key)) {
         console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number);
         await alertDeliveryFlagged(delivery);
+        // Send SMS for flagged delivery
+        const smsMessage = `🚛 FUELSENSE: Delivery ${delivery.bol_number} flagged! Variance: ${delivery.variance_litres || 0}L. Check dashboard.`;
+        await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
         await markAlertSent(key);
       }
     }
 
-    // 3. High daily variance > 500L — max 1 alert per tank per day
+    // 3. High daily variance > 500L — SMS + Email
     const reconRes = await db.query(`
       SELECT r.*, t.tank_number, t.fuel_type
         FROM daily_reconciliation r
@@ -131,6 +147,10 @@ async function runAlertCheck() {
           parseFloat(recon.variance_litres),
           recon.recon_date
         );
+        // Send SMS for high variance
+        const isNegative = parseFloat(recon.variance_litres) < 0;
+        const smsMessage = `📊 FUELSENSE: Tank ${recon.tank_number} variance ${recon.variance_litres > 0 ? '+' : ''}${Math.abs(parseFloat(recon.variance_litres)).toFixed(0)}L. ${isNegative ? 'Possible loss!' : 'Check records.'}`;
+        await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
         await markAlertSent(key);
       }
     }

@@ -1,6 +1,6 @@
 /**
- * FuelSense — Email Alerts via Resend
- * Sends professional HTML emails for critical events:
+ * FuelSense — Email Alerts via Resend + SMS via Africa's Talking
+ * Sends professional HTML emails for critical events + SMS for urgent alerts:
  * - Low stock warning
  * - High water level
  * - Delivery flagged
@@ -11,7 +11,9 @@
 'use strict';
 
 const { Resend } = require('resend');
+const AfricasTalking = require('africastalking');
 
+// ── Email Setup ──────────────────────────────────────────────────────────────
 let resend = null;
 let lastAlertSent = {};
 
@@ -23,6 +25,63 @@ if (process.env.RESEND_API_KEY) {
 
 const FROM = process.env.ALERT_FROM_EMAIL || 'alerts@mafutasalama.co.ke';
 const TO   = process.env.ALERT_TO_EMAIL   || process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com';
+
+// ── SMS Setup (Africa's Talking) ────────────────────────────────────────────
+let sms = null;
+
+if (process.env.AT_API_KEY) {
+  try {
+    const africastalking = AfricasTalking({
+      apiKey: process.env.AT_API_KEY,
+      username: process.env.AT_USERNAME || 'sandbox'
+    });
+    sms = africastalking.SMS;
+    console.log('[SMS] Africa\'s Talking initialized');
+  } catch (err) {
+    console.error('[SMS] Failed to initialize:', err.message);
+  }
+} else {
+  console.log('[SMS] AT_API_KEY not configured - SMS disabled');
+}
+
+/**
+ * Send SMS via Africa's Talking
+ * @param {string} phoneNumber - Kenyan phone number (e.g., 0712345678)
+ * @param {string} message - SMS content (max 160 chars)
+ */
+async function sendSMS(phoneNumber, message) {
+  if (!sms || !process.env.AT_API_KEY) {
+    console.log('[SMS] Skipped - SMS not configured');
+    return;
+  }
+
+  try {
+    // Format Kenyan phone number to international format
+    let formattedNumber = phoneNumber.replace(/\s/g, '');
+    if (formattedNumber.startsWith('0')) {
+      formattedNumber = '+254' + formattedNumber.substring(1);
+    } else if (formattedNumber.startsWith('254')) {
+      formattedNumber = '+' + formattedNumber;
+    } else if (!formattedNumber.startsWith('+')) {
+      formattedNumber = '+254' + formattedNumber;
+    }
+
+    const truncatedMsg = message.substring(0, 160);
+    
+    const options = {
+      to: [formattedNumber],
+      message: truncatedMsg,
+      enqueue: true,
+      from: process.env.AT_SENDER_ID || 'FuelSense'
+    };
+
+    const response = await sms.send(options);
+    console.log(`[SMS] Sent to ${formattedNumber}: ${truncatedMsg.substring(0, 50)}...`);
+    return response;
+  } catch (error) {
+    console.error('[SMS] Failed to send:', error.message);
+  }
+}
 
 // ── Helper Functions ──────────────────────────────────────────────────────────
 
@@ -130,10 +189,56 @@ function wrapHTML(title, content) {
 // ── Alert types ──────────────────────────────────────────────────────────────
 
 /**
+ * Critical alert - sends BOTH email and SMS
+ * For emergencies: low stock <10%, ATG offline, high water, flagged deliveries
+ */
+async function sendCriticalAlert(tankNumber, fuelType, fillPct, litres, alertType = 'low_stock') {
+  const alertKey = `${alertType}_${tankNumber}`;
+  
+  // Send email
+  await alertLowStock(tankNumber, fuelType, fillPct, litres);
+  
+  // Send SMS
+  const smsMessage = `🚨 FUELSENSE: Tank ${tankNumber} ${fuelType} at ${fillPct}%! ${Math.round(litres)}L left. REFILL NOW!`;
+  await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
+}
+
+/**
+ * ATG Offline Alert (SMS + Email)
+ */
+async function sendOfflineAlert(tankNumber, minutesAgo) {
+  const alertKey = `offline_${tankNumber}`;
+  
+  if (shouldSendAlert(alertKey, 60)) {
+    const emailMessage = `Tank ${tankNumber} has not sent a reading for ${minutesAgo} minutes.`;
+    const smsMessage = `🔴 FUELSENSE: Tank ${tankNumber} offline for ${minutesAgo} min! Check ATG connection.`;
+    
+    // Send email
+    const content = `
+      <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <strong style="color:#721c24;">🔴 ATG probe is not sending readings</strong>
+      </div>
+      <p style="color:#1a1a2e;font-size:13px;">Tank ${tankNumber} has not sent a reading for ${minutesAgo} minutes.</p>
+      <p style="color:#721c24;font-size:13px;margin-top:16px;">
+        <strong>Action required:</strong> Check the ATG console, IoT gateway connection, and network connectivity.
+      </p>
+    `;
+    
+    await sendAlert(`🔴 ATG Offline — Tank ${tankNumber}`, content, false);
+    
+    // Send SMS
+    await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
+    recordAlertSent(alertKey);
+  }
+}
+
+/**
  * Low stock alert — tank below threshold (default 20%)
+ * Critical if below 10% - sends SMS
  */
 async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationName = 'Station') {
   const alertKey = `low_stock_${tankNumber}`;
+  const isCritical = fillPct < 10;
   
   const content = `
     <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:16px;margin-bottom:16px;">
@@ -163,6 +268,12 @@ async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationNa
   `;
   
   await sendAlert(`⚠️ Low Stock — Tank ${tankNumber} (${fuelType?.toUpperCase() || 'Unknown'})`, content, true, alertKey);
+  
+  // Send SMS for critical low stock (<10%)
+  if (isCritical) {
+    const smsMessage = `🚨 FUELSENSE CRITICAL: Tank ${tankNumber} ${fuelType} at ${fillPct}%! ${Math.round(nsvLitres)}L left. REFILL NOW!`;
+    await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
+  }
 }
 
 /**
@@ -195,6 +306,10 @@ async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Stat
   `;
   
   await sendAlert(`🚨 High Water Level — Tank ${tankNumber}`, content, true, alertKey);
+  
+  // Send SMS for high water
+  const smsMessage = `💧 FUELSENSE: Tank ${tankNumber} has ${waterMm}mm water! Inspect immediately.`;
+  await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
 }
 
 /**
@@ -235,6 +350,10 @@ async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName =
   `;
   
   await sendAlert(`🚨 Delivery Flagged — ${bolNumber}`, content, true, alertKey);
+  
+  // Send SMS for flagged delivery
+  const smsMessage = `🚛 FUELSENSE: Delivery ${bolNumber} flagged! Variance: ${varianceLitres.toFixed(0)}L. Check dashboard.`;
+  await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
 }
 
 /**
@@ -260,6 +379,10 @@ async function alertReadingGap(message, stationName = 'Station') {
   `;
   
   await sendAlert('🔴 ATG Offline — Reading Gap Detected', content, true, alertKey);
+  
+  // Send SMS for ATG offline
+  const smsMessage = `🔴 FUELSENSE: ${message.substring(0, 140)}`;
+  await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
 }
 
 /**
@@ -303,6 +426,10 @@ async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, st
   `;
   
   await sendAlert(`📋 Daily Variance Alert — Tank ${tankNumber}`, content, true, alertKey);
+  
+  // Send SMS for variance
+  const smsMessage = `📊 FUELSENSE: Tank ${tankNumber} variance ${varianceLitres > 0 ? '+' : ''}${Math.abs(varianceLitres).toFixed(0)}L. ${isNegative ? 'Possible loss!' : 'Check records.'}`;
+  await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
 }
 
 /**
@@ -329,19 +456,45 @@ async function sendTestAlert() {
   return true;
 }
 
+/**
+ * Test SMS (for debugging)
+ */
+async function sendTestSMS() {
+  if (!sms || !process.env.AT_API_KEY) {
+    console.error('[SMS] SMS not configured. Add AT_API_KEY to environment variables.');
+    return false;
+  }
+  
+  const phoneNumber = process.env.ALERT_PHONE_NUMBER;
+  if (!phoneNumber) {
+    console.error('[SMS] ALERT_PHONE_NUMBER not set');
+    return false;
+  }
+  
+  const testMessage = "🧪 FUELSENSE TEST: This is a test SMS from your FuelSense alert system. If you receive this, SMS alerts are working!";
+  await sendSMS(phoneNumber, testMessage);
+  console.log('[SMS] Test SMS sent to', phoneNumber);
+  return true;
+}
+
 // Export legacy function names for backward compatibility
 async function alertDeliveryFlagged(delivery) {
   return alertFlaggedDelivery(delivery.bol_number, delivery.variance_litres, delivery.fuel_type);
 }
 
 module.exports = {
-  // New functions
+  // Email functions
   alertLowStock,
   alertHighWater,
   alertFlaggedDelivery,
   alertReadingGap,
   alertDailyVariance,
   sendTestAlert,
-  // Legacy aliases for backward compatibility
+  sendTestSMS,
+  // SMS functions
+  sendSMS,
+  sendCriticalAlert,
+  sendOfflineAlert,
+  // Legacy aliases
   alertDeliveryFlagged,
 };
