@@ -1190,6 +1190,70 @@ app.delete('/api/admin/suppliers/:id', async (req, res) => {
   }
 });
 
+// ── POST /api/tanks/:tankId/strapping-upload ──────────────────────────────
+const multer = require('multer');
+const csvParser = require('csv-parser');
+const fs = require('fs');
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/api/tanks/:tankId/strapping-upload', upload.single('file'), async (req, res) => {
+  const { tankId } = req.params;
+  const rows = [];
+
+  try {
+    const client = await getDb();
+
+    const tank = await client.query('SELECT id FROM tanks WHERE id = $1', [tankId]);
+    if (!tank.rows.length) return res.status(404).json({ error: 'Tank not found' });
+
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(req.file.path)
+        .pipe(csvParser())
+        .on('data', (row) => {
+          const depth = parseInt(row.depth_mm || row.Depth_mm || row.depth);
+          const volume = parseFloat(row.volume_litres || row.Volume_litres || row.litres);
+          if (!isNaN(depth) && !isNaN(volume)) {
+            rows.push({ depth_mm: depth, volume_litres: volume });
+          }
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'No valid rows found. CSV must have columns: depth_mm, volume_litres' });
+    }
+
+    await client.query('DELETE FROM strapping_table WHERE tank_id = $1', [tankId]);
+
+    await client.query('BEGIN');
+    try {
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO strapping_table (id, tank_id, depth_mm, volume_litres) VALUES (gen_random_uuid(), $1, $2, $3)`,
+          [tankId, row.depth_mm, row.volume_litres]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    }
+
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+    console.log(`[API] Strapping table uploaded for tank ${tankId}: ${rows.length} rows`);
+    res.json({ ok: true, tank_id: tankId, rows_inserted: rows.length, message: `Successfully uploaded ${rows.length} calibration rows` });
+
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    console.error('[API] strapping upload error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
