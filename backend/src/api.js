@@ -1190,11 +1190,18 @@ app.delete('/api/admin/suppliers/:id', async (req, res) => {
   }
 });
 
+const multer = require('multer');
+const csvParser = require('csv-parser');
+const fs = require('fs');
+const path = require('path');
+
 // ── POST /api/tanks/:tankId/strapping-upload ──────────────────────────────
 const multer = require('multer');
 const csvParser = require('csv-parser');
 const fs = require('fs');
-const upload = multer({ dest: 'uploads/' });
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const upload = multer({ dest: uploadDir });
 
 app.post('/api/tanks/:tankId/strapping-upload', upload.single('file'), async (req, res) => {
   const { tankId } = req.params;
