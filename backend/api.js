@@ -1035,10 +1035,248 @@ app.delete('/api/admin/suppliers/:id', async (req, res) => {
   }
 });
 
+// ── ADMIN ROUTES ──────────────────────────────────────────────────────────
+
+// GET /api/admin/stations
+app.get('/api/admin/stations', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT s.*, COUNT(t.id)::text AS tank_count 
+       FROM stations s 
+       LEFT JOIN tanks t ON t.station_id = s.id 
+       GROUP BY s.id 
+       ORDER BY s.name`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/stations
+app.post('/api/admin/stations', async (req, res) => {
+  const { name, location } = req.body;
+  if (!name) return res.status(400).json({ error: 'Station name is required' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO stations (id, name, location) VALUES (gen_random_uuid(), $1, $2) RETURNING *`,
+      [name, location || null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/stations/:id
+app.put('/api/admin/stations/:id', async (req, res) => {
+  const { name, location } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE stations SET name=$1, location=$2 WHERE id=$3 RETURNING *`,
+      [name, location || null, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Station not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/stations/:id
+app.delete('/api/admin/stations/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM stations WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/tanks
+app.get('/api/admin/tanks', async (req, res) => {
+  try {
+    const client = await getDb();
+    const stationId = req.query.station_id;
+    let query = `SELECT t.*, s.name AS station_name FROM tanks t JOIN stations s ON s.id = t.station_id`;
+    const params = [];
+    if (stationId) { params.push(stationId); query += ` WHERE t.station_id = $1`; }
+    query += ` ORDER BY s.name, t.tank_number`;
+    const result = await client.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/tanks
+app.post('/api/admin/tanks', async (req, res) => {
+  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
+  if (!station_id || !tank_number || !fuel_type || !capacity_litres) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO tanks (id, station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6) RETURNING *`,
+      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c || 0.835, low_stock_threshold_pct || 20]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/tanks/:id
+app.put('/api/admin/tanks/:id', async (req, res) => {
+  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE tanks SET station_id=$1, tank_number=$2, fuel_type=$3, capacity_litres=$4, fuel_density_at_15c=$5, low_stock_threshold_pct=$6 WHERE id=$7 RETURNING *`,
+      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Tank not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/tanks/:id
+app.delete('/api/admin/tanks/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM tanks WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/users
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT u.*, s.name AS station_name FROM user_profiles u LEFT JOIN stations s ON s.id = u.station_id ORDER BY u.email`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/users
+app.post('/api/admin/users', async (req, res) => {
+  const { supabase_uid, email, full_name, role, station_id } = req.body;
+  if (!supabase_uid || !email) return res.status(400).json({ error: 'supabase_uid and email are required' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO user_profiles (supabase_uid, email, full_name, role, station_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [supabase_uid, email, full_name || null, role || 'manager', station_id || null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/users/:id
+app.put('/api/admin/users/:id', async (req, res) => {
+  const { email, full_name, role, station_id } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE user_profiles SET email=$1, full_name=$2, role=$3, station_id=$4 WHERE id=$5 RETURNING *`,
+      [email, full_name || null, role, station_id || null, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/users/:id
+app.delete('/api/admin/users/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM user_profiles WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/suppliers
+app.get('/api/admin/suppliers', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(`SELECT * FROM suppliers ORDER BY name`);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/suppliers
+app.post('/api/admin/suppliers', async (req, res) => {
+  const { name, contact_name, phone, email, address } = req.body;
+  if (!name) return res.status(400).json({ error: 'Supplier name is required' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO suppliers (id, name, contact_name, phone, email, address, is_active)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true) RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/suppliers/:id
+app.put('/api/admin/suppliers/:id', async (req, res) => {
+  const { name, contact_name, phone, email, address, is_active } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, is_active=$6 WHERE id=$7 RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null, is_active !== undefined ? is_active : true, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/suppliers/:id
+app.delete('/api/admin/suppliers/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM suppliers WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
 });
+
+
 
 // ── Ingestion Scheduler ───────────────────────────────────────────────────
 setTimeout(async () => {
