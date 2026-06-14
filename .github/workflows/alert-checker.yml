@@ -1,10 +1,8 @@
 name: FuelSense Alert Checker
-
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
-
 jobs:
   check-alerts:
     runs-on: ubuntu-latest
@@ -12,19 +10,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install dependencies
         working-directory: backend
         run: npm install
-
       - name: Copy alert checker
         run: cp backend/src/alert-checker.js backend/src/alert-checker-run.js
-
       - name: Run alert checker
         working-directory: backend
         env:
@@ -36,4 +30,8 @@ jobs:
           AT_USERNAME: ${{ secrets.AT_USERNAME }}
           AT_SENDER_ID: ${{ secrets.AT_SENDER_ID }}
           ALERT_PHONE_NUMBER: ${{ secrets.ALERT_PHONE_NUMBER }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node src/alert-checker.js
