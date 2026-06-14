@@ -1,0 +1,18 @@
+name: FuelSense Keep-Alive
+
+on:
+  schedule:
+    # Every 10 minutes — Render free tier spins down after ~15 min idle.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health endpoint
+        run: |
+          echo "Pinging FuelSense backend..."
+          curl -sf -o /dev/null -w "Status: %{http_code} | Time: %{time_total}s\n" \
+            https://fuelsense-fraud-detection.onrender.com/api/health \
+            || echo "Health check failed (service may be cold-starting)"
