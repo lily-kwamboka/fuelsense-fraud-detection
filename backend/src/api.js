@@ -52,22 +52,9 @@ const corsOptions = {
     exposedHeaders: ['Content-Length', 'X-Requested-With'],
     maxAge: 86400  // Cache preflight results for 24 hours
 };
-
 // Apply CORS middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', (req, res) => {
-    const origin = req.headers.origin;
-    if (origin && allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-    }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400');
-    res.sendStatus(204);  // No content, preflight successful
-});
+// NOTE: preflight handled by cors middleware above (Express 5 removed support for app.options("*", ...))
 
 // Additional middleware for logging CORS requests
 app.use((req, res, next) => {
