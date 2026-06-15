@@ -88,7 +88,7 @@ for (const apiPath of possiblePaths) {
         console.log(`[API] Found API at: ${apiPath}`);
         try {
             const api = require(apiPath);
-            app.use('/api', api);
+            app.use(api);
             console.log(`[API] ✅ FuelSense API routes mounted successfully from ${apiPath}`);
             apiLoaded = true;
             break;
