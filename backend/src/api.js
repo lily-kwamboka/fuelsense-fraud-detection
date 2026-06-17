@@ -1,15 +1,15 @@
 require('dotenv').config();
 'use strict';
 
-const express    = require('express');
-const cors       = require('cors');
+const express = require('express');
+const cors = require('cors');
 const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
 
-const app          = express();
-const PORT         = process.env.API_PORT || 3001;
+const app = express();
+const PORT = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
@@ -46,8 +46,10 @@ async function getDb() {
 
 // ── Role access levels ────────────────────────────────────────────────────────
 function getRoleAccessLevel(role) {
-  return { owner: 100, headquarters: 80, supervisor: 70, compliance_officer: 65,
-           station_manager: 50, shift_supervisor: 30, attendant: 10 }[role] || 0;
+  return {
+    owner: 100, headquarters: 80, supervisor: 70, compliance_officer: 65,
+    station_manager: 50, shift_supervisor: 30, attendant: 10
+  }[role] || 0;
 }
 
 // ── Multi-tenant: resolve caller's organization_id from supabase_uid ─────────
@@ -70,8 +72,8 @@ async function isSuperAdmin(db, email) {
 }
 
 // ── Utility endpoints ─────────────────────────────────────────────────────────
-app.get('/api/ping',   (req, res) => res.json({ message: 'pong', timestamp: new Date().toISOString() }));
-app.get('/api/health', (req, res) => res.json({ status: 'ok',   timestamp: new Date().toISOString() }));
+app.get('/api/ping', (req, res) => res.json({ message: 'pong', timestamp: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // ── GET /api/user-profile ─────────────────────────────────────────────────────
 app.get('/api/user-profile', async (req, res) => {
@@ -98,12 +100,12 @@ app.get('/api/user-profile', async (req, res) => {
 // ── GET /api/stations ─────────────────────────────────────────────────────────
 app.get('/api/stations', async (req, res) => {
   try {
-    const client   = await getDb();
-    const user     = await resolveUser(client, req.query.uid);
+    const client = await getDb();
+    const user = await resolveUser(client, req.query.uid);
 
     if (!user || !user.orgId) return res.json([]);
 
-    let query    = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
+    let query = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
     const params = [user.orgId];
 
     if (user.accessLevel < 65 && user.stationId) {
@@ -122,8 +124,8 @@ app.get('/api/stations', async (req, res) => {
 // ── GET /api/tanks ────────────────────────────────────────────────────────────
 app.get('/api/tanks', async (req, res) => {
   try {
-    const client    = await getDb();
-    const user      = await resolveUser(client, req.query.uid);
+    const client = await getDb();
+    const user = await resolveUser(client, req.query.uid);
     const stationId = req.query.station_id;
 
     if (!user || !user.orgId) return res.json([]);
@@ -182,8 +184,8 @@ app.get('/api/tanks/:id/readings', async (req, res) => {
 // ── GET /api/deliveries ───────────────────────────────────────────────────────
 app.get('/api/deliveries', async (req, res) => {
   try {
-    const client    = await getDb();
-    const user      = await resolveUser(client, req.query.uid);
+    const client = await getDb();
+    const user = await resolveUser(client, req.query.uid);
     const stationId = req.query.station_id;
 
     if (!user || !user.orgId) return res.json([]);
@@ -247,7 +249,7 @@ app.post('/api/deliveries', async (req, res) => {
   if (!tank_id || !supplier_name || !bol_number || !bol_nsv_litres)
     return res.status(400).json({ error: 'Missing required fields' });
   try {
-    const client     = await getDb();
+    const client = await getDb();
     const readingRes = await client.query(
       `SELECT id, nsv_litres FROM atg_readings WHERE tank_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
       [tank_id]
@@ -272,8 +274,8 @@ app.post('/api/deliveries', async (req, res) => {
 // ── GET /api/reconciliation ───────────────────────────────────────────────────
 app.get('/api/reconciliation', async (req, res) => {
   try {
-    const client    = await getDb();
-    const user      = await resolveUser(client, req.query.uid);
+    const client = await getDb();
+    const user = await resolveUser(client, req.query.uid);
     const stationId = req.query.station_id;
 
     if (!user || !user.orgId) return res.json([]);
@@ -312,8 +314,8 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
   if (!tank_id || !recon_date || pump_sales_litres === undefined)
     return res.status(400).json({ error: 'Missing required fields' });
   try {
-    const client   = await getDb();
-    const openRes  = await client.query(
+    const client = await getDb();
+    const openRes = await client.query(
       `SELECT nsv_litres FROM atg_readings WHERE tank_id=$1 AND recorded_at::date=$2::date ORDER BY recorded_at ASC  LIMIT 1`, [tank_id, recon_date]);
     const closeRes = await client.query(
       `SELECT nsv_litres FROM atg_readings WHERE tank_id=$1 AND recorded_at::date=$2::date ORDER BY recorded_at DESC LIMIT 1`, [tank_id, recon_date]);
@@ -321,7 +323,7 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     if (!openRes.rows.length || !closeRes.rows.length)
       return res.status(400).json({ error: 'No readings found for this tank on this date' });
 
-    const openNSV  = parseFloat(openRes.rows[0].nsv_litres);
+    const openNSV = parseFloat(openRes.rows[0].nsv_litres);
     const closeNSV = parseFloat(closeRes.rows[0].nsv_litres);
     const delivRes = await client.query(
       `SELECT COALESCE(SUM(received_nsv_litres), 0) AS total FROM deliveries
@@ -329,8 +331,8 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
       [tank_id, recon_date]
     );
     const delivNSV = parseFloat(delivRes.rows[0].total) || 0;
-    const sales    = parseFloat(pump_sales_litres);
-    const theoCl   = openNSV + delivNSV - sales;
+    const sales = parseFloat(pump_sales_litres);
+    const theoCl = openNSV + delivNSV - sales;
     const variance = closeNSV - theoCl;
 
     await client.query(
@@ -455,10 +457,10 @@ app.post('/api/audit-log', async (req, res) => {
     await client.query(
       `INSERT INTO audit_log (user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [user_email, user_role||null, action, entity_type, entity_id||null, station_id||null,
-       old_value ? JSON.stringify(old_value) : null,
-       new_value ? JSON.stringify(new_value) : null,
-       req.headers['x-forwarded-for'] || req.socket.remoteAddress || null]
+      [user_email, user_role || null, action, entity_type, entity_id || null, station_id || null,
+        old_value ? JSON.stringify(old_value) : null,
+        new_value ? JSON.stringify(new_value) : null,
+        req.headers['x-forwarded-for'] || req.socket.remoteAddress || null]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -489,10 +491,10 @@ app.get('/api/plans', async (req, res) => {
 // ── GET /api/subscription ─────────────────────────────────────────────────────
 app.get('/api/subscription', async (req, res) => {
   try {
-    const client    = await getDb();
-    const uid       = req.query.uid;
+    const client = await getDb();
+    const uid = req.query.uid;
     const stationId = req.query.station_id;
-    let orgId       = null;
+    let orgId = null;
 
     if (uid) {
       const user = await resolveUser(client, uid);
@@ -540,7 +542,7 @@ app.post('/api/payments/initiate', async (req, res) => {
   if (!station_id || !plan_id || !billing_cycle || !user_email)
     return res.status(400).json({ error: 'Missing required fields' });
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const pesapal = require('./pesapal');
     let plan, amount, isTest = false;
 
@@ -549,7 +551,7 @@ app.post('/api/payments/initiate', async (req, res) => {
     } else {
       const planRes = await client.query(`SELECT * FROM subscription_plans WHERE id=$1`, [plan_id]);
       if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
-      plan   = planRes.rows[0];
+      plan = planRes.rows[0];
       amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
     }
 
@@ -562,7 +564,7 @@ app.post('/api/payments/initiate', async (req, res) => {
       [station_id, orgId, amount, billing_cycle, plan.name]
     );
     const paymentId = payRes.rows[0].id;
-    const ipnId     = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
 
     const order = {
       id: paymentId, currency: 'KES', amount: parseFloat(amount),
@@ -586,21 +588,21 @@ app.post('/api/payments/initiate', async (req, res) => {
 app.get('/api/payments/callback', async (req, res) => {
   const { OrderTrackingId, OrderMerchantReference } = req.query;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const pesapal = require('./pesapal');
-    const status  = await pesapal.getTransactionStatus(OrderTrackingId);
+    const status = await pesapal.getTransactionStatus(OrderTrackingId);
 
     if (status.payment_status_description === 'Completed') {
       await client.query(
         `UPDATE payments SET status='completed', pesapal_tracking_id=$1 WHERE id=$2`,
         [OrderTrackingId, OrderMerchantReference]
       );
-      const payRes  = await client.query(`SELECT * FROM payments WHERE id=$1`, [OrderMerchantReference]);
+      const payRes = await client.query(`SELECT * FROM payments WHERE id=$1`, [OrderMerchantReference]);
       const payment = payRes.rows[0];
 
       if (payment && payment.plan_name !== 'TEST_PAYMENT') {
         const planRes = await client.query(`SELECT * FROM subscription_plans WHERE name=$1`, [payment.plan_name]);
-        const plan    = planRes.rows[0];
+        const plan = planRes.rows[0];
         if (plan) {
           const now = new Date(), end = new Date(now);
           payment.billing_cycle === 'annual' ? end.setFullYear(end.getFullYear() + 1) : end.setMonth(end.getMonth() + 1);
@@ -635,9 +637,9 @@ app.get('/api/payments/history', async (req, res) => {
   try {
     const client = await getDb();
     const { station_id, uid } = req.query;
-    const user   = uid ? await resolveUser(client, uid) : null;
+    const user = uid ? await resolveUser(client, uid) : null;
     const params = [];
-    let where    = '';
+    let where = '';
 
     if (user?.orgId) {
       params.push(user.orgId); where = `WHERE organization_id = $${params.length}`;
@@ -657,9 +659,9 @@ app.post('/api/payments/test', async (req, res) => {
   const { station_id, amount, user_email, user_name, phone } = req.body;
   if (!amount || !user_email) return res.status(400).json({ error: 'Missing required fields: amount, user_email' });
   try {
-    const client     = await getDb();
-    const pesapal    = require('./pesapal');
-    const uuidRegex  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const client = await getDb();
+    const pesapal = require('./pesapal');
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let realStationId = station_id;
     if (!station_id || !uuidRegex.test(station_id)) {
       const stRes = await client.query(`SELECT id FROM stations LIMIT 1`);
@@ -674,14 +676,16 @@ app.post('/api/payments/test', async (req, res) => {
       [realStationId, orgId, amount]
     );
     const paymentId = payRes.rows[0].id;
-    const ipnId     = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
     const pesapalRes = await pesapal.submitOrder({
       id: paymentId, currency: 'KES', amount: parseFloat(amount),
       description: `FuelSense Test Payment - KES ${amount}`,
       callback_url: process.env.FRONTEND_URL + '/payment-success',
       notification_id: ipnId,
-      billing_address: { email_address: user_email, phone_number: phone||'', country_code: 'KE',
-        first_name: user_name?.split(' ')[0]||'Customer', last_name: user_name?.split(' ')[1]||'' },
+      billing_address: {
+        email_address: user_email, phone_number: phone || '', country_code: 'KE',
+        first_name: user_name?.split(' ')[0] || 'Customer', last_name: user_name?.split(' ')[1] || ''
+      },
     });
     await client.query(`UPDATE payments SET pesapal_order_id=$1 WHERE id=$2`, [pesapalRes.order_tracking_id, paymentId]);
     res.json({ payment_id: paymentId, redirect_url: pesapalRes.redirect_url, amount });
@@ -705,7 +709,7 @@ app.post('/api/admin/organizations', async (req, res) => {
   if (!admin_email || !name || !owner_email)
     return res.status(400).json({ error: 'admin_email, name, owner_email required' });
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
@@ -718,7 +722,7 @@ app.post('/api/admin/organizations', async (req, res) => {
     const orgRes = await client.query(
       `INSERT INTO organizations (name, slug, owner_email, plan_id, max_stations, max_tanks, subscription_status, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,'trial',$7) RETURNING *`,
-      [name, slug || name.toLowerCase().replace(/\s+/g, '-'), owner_email, plan_id||null, maxSt, maxTk, admin_email]
+      [name, slug || name.toLowerCase().replace(/\s+/g, '-'), owner_email, plan_id || null, maxSt, maxTk, admin_email]
     );
     const org = orgRes.rows[0];
     console.log('[SUPER-ADMIN] Created org:', org.name, '| owner:', owner_email);
@@ -732,7 +736,7 @@ app.post('/api/admin/organizations', async (req, res) => {
 app.get('/api/admin/organizations', async (req, res) => {
   const { admin_email } = req.query;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
@@ -750,7 +754,7 @@ app.get('/api/admin/organizations', async (req, res) => {
 app.get('/api/admin/organizations/:id', async (req, res) => {
   const { admin_email } = req.query;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
@@ -817,9 +821,9 @@ app.delete('/api/admin/stations/:id', async (req, res) => {
 // ── ADMIN: Tanks CRUD ─────────────────────────────────────────────────────────
 app.get('/api/admin/tanks', async (req, res) => {
   try {
-    const client    = await getDb();
+    const client = await getDb();
     const stationId = req.query.station_id;
-    let query  = `SELECT t.*, s.name AS station_name FROM tanks t JOIN stations s ON s.id = t.station_id`;
+    let query = `SELECT t.*, s.name AS station_name FROM tanks t JOIN stations s ON s.id = t.station_id`;
     const params = [];
     if (stationId) { params.push(stationId); query += ` WHERE t.station_id = $1`; }
     query += ` ORDER BY s.name, t.tank_number`;
@@ -924,26 +928,26 @@ app.get('/api/admin/suppliers', async (req, res) => {
 });
 
 app.post('/api/admin/suppliers', async (req, res) => {
-  const { name, contact_name, phone, email, address } = req.body;
+  const { name, contact_name, phone, email, address, tolerance_pct } = req.body;
   if (!name) return res.status(400).json({ error: 'Supplier name is required' });
   try {
     const client = await getDb();
     const result = await client.query(
-      `INSERT INTO suppliers (name, contact_name, phone, email, address, is_active)
-       VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
-      [name, contact_name || null, phone || null, email || null, address || null]
+      `INSERT INTO suppliers (id, name, contact_name, phone, email, address, is_active, tolerance_pct)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true, $6) RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null, tolerance_pct || 0.25]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/admin/suppliers/:id', async (req, res) => {
-  const { name, contact_name, phone, email, address, is_active } = req.body;
+  const { name, contact_name, phone, email, address, is_active, tolerance_pct } = req.body;
   try {
     const client = await getDb();
     const result = await client.query(
-      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, is_active=$6 WHERE id=$7 RETURNING *`,
-      [name, contact_name || null, phone || null, email || null, address || null, is_active !== undefined ? is_active : true, req.params.id]
+      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, is_active=$6, tolerance_pct=$7 WHERE id=$8 RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null, is_active !== undefined ? is_active : true, tolerance_pct || 0.25, req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
     res.json(result.rows[0]);
@@ -962,7 +966,7 @@ app.delete('/api/admin/suppliers/:id', async (req, res) => {
 app.put('/api/admin/user-profiles/:uid', async (req, res) => {
   const { admin_email, role, station_id } = req.body;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
     if (!role) return res.status(400).json({ error: 'role required' });
@@ -980,13 +984,13 @@ app.post('/api/stations', async (req, res) => {
   if (!uid || !name) return res.status(400).json({ error: 'uid and name required' });
   try {
     const client = await getDb();
-    const user   = await resolveUser(client, uid);
+    const user = await resolveUser(client, uid);
     if (!user || user.accessLevel < 100) return res.status(403).json({ error: 'Owner access required' });
 
-    const org      = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
+    const org = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
     const countRes = await client.query(`SELECT COUNT(*) AS count FROM stations WHERE organization_id=$1`, [user.orgId]);
-    const current  = parseInt(countRes.rows[0].count);
-    const maxSt    = org.rows[0]?.max_stations || 1;
+    const current = parseInt(countRes.rows[0].count);
+    const maxSt = org.rows[0]?.max_stations || 1;
     if (maxSt !== -1 && current >= maxSt)
       return res.status(403).json({ error: `Station limit reached (${maxSt}). Upgrade your plan to add more stations.` });
 
@@ -1064,7 +1068,7 @@ async function checkUpcomingRenewals() {
 }
 
 setInterval(checkExpiredSubscriptions, 60 * 60 * 1000);
-setInterval(checkUpcomingRenewals,     6  * 60 * 60 * 1000);
+setInterval(checkUpcomingRenewals, 6 * 60 * 60 * 1000);
 setTimeout(async () => { await checkExpiredSubscriptions(); await checkUpcomingRenewals(); }, 5000);
 
 // ── ATG Scheduler ─────────────────────────────────────────────────────────────
@@ -1074,7 +1078,7 @@ setTimeout(async () => {
     const { calculateNSV } = require('./measurement-engine');
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
-    const STABLE_CYCLES_REQUIRED  = 10;
+    const STABLE_CYCLES_REQUIRED = 10;
 
     async function pollCycle() {
       console.log('[scheduler] Poll cycle started at ' + new Date().toISOString());
@@ -1087,14 +1091,14 @@ setTimeout(async () => {
         try {
           const tankRes = await client.query('SELECT * FROM tanks WHERE tank_number=$1 LIMIT 1', [reading.tankNumber]);
           if (!tankRes.rows[0]) { console.warn('[scheduler] No tank for probe ' + reading.tankNumber); continue; }
-          const t       = tankRes.rows[0];
+          const t = tankRes.rows[0];
           const volumes = await calculateNSV(client, t.id, reading.innageMm, reading.waterMm, reading.tempC);
 
           await client.query(
             `INSERT INTO atg_readings (id, tank_id, recorded_at, innage_mm, water_mm, temperature_c, tov_litres, water_litres, gov_litres, vcf, nsv_litres, is_locked)
              VALUES (gen_random_uuid(),$1,NOW(),$2,$3,$4,$5,$6,$7,$8,$9,FALSE)`,
             [t.id, reading.innageMm, reading.waterMm, reading.tempC,
-             volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
+            volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
           );
           console.log('[scheduler] Saved | tank ' + t.tank_number + ' (' + reading.product + ') | innage: ' + reading.innageMm + 'mm | nsv: ' + volumes.nsv_litres + 'L');
 

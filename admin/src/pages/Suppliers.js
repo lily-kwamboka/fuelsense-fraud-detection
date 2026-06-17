@@ -13,6 +13,7 @@ export default function Suppliers({ api }) {
         phone: '',
         email: '',
         address: '',
+        tolerance_pct: '0.25',
     });
 
     async function loadSuppliers() {
@@ -32,7 +33,7 @@ export default function Suppliers({ api }) {
 
     function openAdd() {
         setEditing(null);
-        setForm({ name: '', contact_name: '', phone: '', email: '', address: '' });
+        setForm({ name: '', contact_name: '', phone: '', email: '', address: '', tolerance_pct: '0.25' });
         setError('');
         setShowForm(true);
     }
@@ -45,6 +46,7 @@ export default function Suppliers({ api }) {
             phone: supplier.phone || '',
             email: supplier.email || '',
             address: supplier.address || '',
+            tolerance_pct: supplier.tolerance_pct || '0.25',
         });
         setError('');
         setShowForm(true);
@@ -52,6 +54,7 @@ export default function Suppliers({ api }) {
 
     async function handleSave() {
         if (!form.name.trim()) { setError('Supplier name is required.'); return; }
+        if (!form.tolerance_pct || isNaN(form.tolerance_pct)) { setError('Tolerance % must be a number.'); return; }
         setSaving(true);
         setError('');
         try {
@@ -60,7 +63,10 @@ export default function Suppliers({ api }) {
             const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(form),
+                body: JSON.stringify({
+                    ...form,
+                    tolerance_pct: parseFloat(form.tolerance_pct),
+                }),
             });
             const data = await res.json();
             if (data.error) { setError(data.error); return; }
@@ -131,72 +137,51 @@ export default function Suppliers({ api }) {
                             {error}
                         </div>
                     )}
+
+                    {/* Row 1 — Name, Contact */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                         <div>
                             <label style={labelStyle}>Supplier Name *</label>
-                            <input
-                                type="text"
-                                value={form.name}
-                                onChange={e => setForm({ ...form, name: e.target.value })}
-                                placeholder="e.g. Total Energies Kenya"
-                                style={inputStyle}
-                            />
+                            <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Total Energies Kenya" style={inputStyle} />
                         </div>
                         <div>
                             <label style={labelStyle}>Contact Person</label>
-                            <input
-                                type="text"
-                                value={form.contact_name}
-                                onChange={e => setForm({ ...form, contact_name: e.target.value })}
-                                placeholder="e.g. James Mwangi"
-                                style={inputStyle}
-                            />
+                            <input type="text" value={form.contact_name} onChange={e => setForm({ ...form, contact_name: e.target.value })} placeholder="e.g. James Mwangi" style={inputStyle} />
                         </div>
                     </div>
+
+                    {/* Row 2 — Phone, Email */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                         <div>
                             <label style={labelStyle}>Phone</label>
-                            <input
-                                type="text"
-                                value={form.phone}
-                                onChange={e => setForm({ ...form, phone: e.target.value })}
-                                placeholder="e.g. +254 700 000 000"
-                                style={inputStyle}
-                            />
+                            <input type="text" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="e.g. +254 700 000 000" style={inputStyle} />
                         </div>
                         <div>
                             <label style={labelStyle}>Email</label>
-                            <input
-                                type="email"
-                                value={form.email}
-                                onChange={e => setForm({ ...form, email: e.target.value })}
-                                placeholder="e.g. james@totalenergies.com"
-                                style={inputStyle}
-                            />
+                            <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="e.g. james@totalenergies.com" style={inputStyle} />
                         </div>
                     </div>
-                    <div style={{ marginBottom: '16px' }}>
-                        <label style={labelStyle}>Address</label>
-                        <input
-                            type="text"
-                            value={form.address}
-                            onChange={e => setForm({ ...form, address: e.target.value })}
-                            placeholder="e.g. Upper Hill, Nairobi"
-                            style={inputStyle}
-                        />
+
+                    {/* Row 3 — Address, Tolerance */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                        <div>
+                            <label style={labelStyle}>Address</label>
+                            <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="e.g. Upper Hill, Nairobi" style={inputStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Variance Tolerance (%)</label>
+                            <input type="number" step="0.01" min="0" max="5" value={form.tolerance_pct} onChange={e => setForm({ ...form, tolerance_pct: e.target.value })} placeholder="e.g. 0.25" style={inputStyle} />
+                            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '4px' }}>
+                                Default is 0.25% — agreed variance threshold with this supplier
+                            </div>
+                        </div>
                     </div>
+
                     <div style={{ display: 'flex', gap: '10px' }}>
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            style={{ padding: '9px 20px', background: saving ? '#888' : '#27ae60', color: '#fff', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600' }}
-                        >
+                        <button onClick={handleSave} disabled={saving} style={{ padding: '9px 20px', background: saving ? '#888' : '#27ae60', color: '#fff', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600' }}>
                             {saving ? 'Saving...' : editing ? 'Update Supplier' : 'Add Supplier'}
                         </button>
-                        <button
-                            onClick={() => setShowForm(false)}
-                            style={{ padding: '9px 20px', background: '#f0f0f0', color: '#333', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
-                        >
+                        <button onClick={() => setShowForm(false)} style={{ padding: '9px 20px', background: '#f0f0f0', color: '#333', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>
                             Cancel
                         </button>
                     </div>
@@ -222,6 +207,9 @@ export default function Suppliers({ api }) {
                                     <span style={{ background: supplier.is_active ? '#eafaf1' : '#f0f0f0', color: supplier.is_active ? '#1e8449' : '#888', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' }}>
                                         {supplier.is_active ? 'ACTIVE' : 'INACTIVE'}
                                     </span>
+                                    <span style={{ background: '#e8f4fd', color: '#1a5276', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' }}>
+                                        Tolerance: {supplier.tolerance_pct || 0.25}%
+                                    </span>
                                 </div>
                                 <div style={{ fontSize: '13px', color: '#666' }}>
                                     {supplier.contact_name && <span>👤 {supplier.contact_name} &nbsp;·&nbsp;</span>}
@@ -233,22 +221,13 @@ export default function Suppliers({ api }) {
                                 )}
                             </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
-                                <button
-                                    onClick={() => toggleActive(supplier)}
-                                    style={{ padding: '7px 14px', background: supplier.is_active ? '#fff3cd' : '#eafaf1', color: supplier.is_active ? '#856404' : '#1e8449', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
-                                >
+                                <button onClick={() => toggleActive(supplier)} style={{ padding: '7px 14px', background: supplier.is_active ? '#fff3cd' : '#eafaf1', color: supplier.is_active ? '#856404' : '#1e8449', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}>
                                     {supplier.is_active ? '⏸ Deactivate' : '▶ Activate'}
                                 </button>
-                                <button
-                                    onClick={() => openEdit(supplier)}
-                                    style={{ padding: '7px 14px', background: '#e8f4fd', color: '#1a5276', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
-                                >
+                                <button onClick={() => openEdit(supplier)} style={{ padding: '7px 14px', background: '#e8f4fd', color: '#1a5276', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}>
                                     ✏️ Edit
                                 </button>
-                                <button
-                                    onClick={() => handleDelete(supplier)}
-                                    style={{ padding: '7px 14px', background: '#fdecea', color: '#e74c3c', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
-                                >
+                                <button onClick={() => handleDelete(supplier)} style={{ padding: '7px 14px', background: '#fdecea', color: '#e74c3c', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}>
                                     🗑 Delete
                                 </button>
                             </div>
