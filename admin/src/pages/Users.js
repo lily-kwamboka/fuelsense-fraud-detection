@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const ROLES = ['admin', 'manager'];
+const ROLES = ['owner', 'headquarters', 'supervisor', 'compliance_officer', 'station_manager', 'shift_supervisor', 'attendant'];
 
 export default function Users({ api }) {
     const [users, setUsers] = useState([]);

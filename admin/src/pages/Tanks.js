@@ -11,7 +11,7 @@ export default function Tanks({ api }) {
     const [filterStation, setFilterStation] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
-    const [savedTankId, setSavedTankId] = useState(null); // ← holds the tank id after save
+    const [savedTankId, setSavedTankId] = useState(null);
     const [csvFile, setCsvFile] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState(null);
@@ -23,6 +23,8 @@ export default function Tanks({ api }) {
         capacity_litres: '',
         fuel_density_at_15c: '0.835',
         low_stock_threshold_pct: '20',
+        deadwood_litres: '0',
+        atg_probe_id: '',
     });
 
     async function loadData() {
@@ -58,6 +60,8 @@ export default function Tanks({ api }) {
             capacity_litres: '',
             fuel_density_at_15c: '0.835',
             low_stock_threshold_pct: '20',
+            deadwood_litres: '0',
+            atg_probe_id: '',
         });
         setError('');
         setShowForm(true);
@@ -65,7 +69,7 @@ export default function Tanks({ api }) {
 
     function openEdit(tank) {
         setEditing(tank);
-        setSavedTankId(tank.id); // existing tank — show upload section immediately
+        setSavedTankId(tank.id);
         setCsvFile(null);
         setUploadResult(null);
         setUploadError('');
@@ -76,6 +80,8 @@ export default function Tanks({ api }) {
             capacity_litres: tank.capacity_litres,
             fuel_density_at_15c: tank.fuel_density_at_15c,
             low_stock_threshold_pct: tank.low_stock_threshold_pct,
+            deadwood_litres: tank.deadwood_litres || '0',
+            atg_probe_id: tank.atg_probe_id || '',
         });
         setError('');
         setShowForm(true);
@@ -98,12 +104,12 @@ export default function Tanks({ api }) {
                     capacity_litres: parseFloat(form.capacity_litres),
                     fuel_density_at_15c: parseFloat(form.fuel_density_at_15c),
                     low_stock_threshold_pct: parseFloat(form.low_stock_threshold_pct),
+                    deadwood_litres: parseFloat(form.deadwood_litres) || 0,
+                    atg_probe_id: form.atg_probe_id || null,
                 }),
             });
             const data = await res.json();
             if (data.error) { setError(data.error); return; }
-
-            // Show CSV upload section after tank is saved
             setSavedTankId(data.id || editing?.id);
             loadData();
         } catch (err) {
@@ -116,30 +122,20 @@ export default function Tanks({ api }) {
     async function handleCsvUpload() {
         if (!csvFile) { setUploadError('Please select a CSV file first.'); return; }
         if (!savedTankId) { setUploadError('Save the tank first before uploading.'); return; }
-
         setUploading(true);
         setUploadError('');
         setUploadResult(null);
-
         try {
             const formData = new FormData();
             formData.append('file', csvFile);
-
-            // Posts to your FuelSense main API (api.js), not admin API
             const res = await fetch(`https://fuelsense-fraud-detection-1.onrender.com/api/tanks/${savedTankId}/strapping-upload`, {
                 method: 'POST',
                 body: formData,
             });
-
             const data = await res.json();
-            if (data.error) {
-                setUploadError(data.error);
-                return;
-            }
-
+            if (data.error) { setUploadError(data.error); return; }
             setUploadResult(data);
             setCsvFile(null);
-            // Reset file input
             document.getElementById('csv-upload-input').value = '';
         } catch (err) {
             setUploadError('Upload failed. Make sure your API server is running.');
@@ -187,9 +183,7 @@ export default function Tanks({ api }) {
                         style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px', background: '#fff', outline: 'none' }}
                     >
                         <option value="">All Stations</option>
-                        {stations.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
+                        {stations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                 </div>
                 <button
@@ -211,76 +205,58 @@ export default function Tanks({ api }) {
                             {error}
                         </div>
                     )}
+
+                    {/* Row 1 — Station, Tank Number, Fuel Type */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                         <div>
                             <label style={labelStyle}>Station *</label>
-                            <select
-                                value={form.station_id}
-                                onChange={e => setForm({ ...form, station_id: e.target.value })}
-                                style={inputStyle}
-                            >
+                            <select value={form.station_id} onChange={e => setForm({ ...form, station_id: e.target.value })} style={inputStyle}>
                                 <option value="">Select station...</option>
-                                {stations.map(s => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
+                                {stations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                         </div>
                         <div>
                             <label style={labelStyle}>Tank Number *</label>
-                            <input
-                                type="number"
-                                value={form.tank_number}
-                                onChange={e => setForm({ ...form, tank_number: e.target.value })}
-                                placeholder="e.g. 1"
-                                style={inputStyle}
-                            />
+                            <input type="number" value={form.tank_number} onChange={e => setForm({ ...form, tank_number: e.target.value })} placeholder="e.g. 1" style={inputStyle} />
                         </div>
                         <div>
                             <label style={labelStyle}>Fuel Type *</label>
-                            <select
-                                value={form.fuel_type}
-                                onChange={e => setForm({ ...form, fuel_type: e.target.value })}
-                                style={inputStyle}
-                            >
-                                {FUEL_TYPES.map(f => (
-                                    <option key={f} value={f}>{f.charAt(0).toUpperCase() + f.slice(1)}</option>
-                                ))}
+                            <select value={form.fuel_type} onChange={e => setForm({ ...form, fuel_type: e.target.value })} style={inputStyle}>
+                                {FUEL_TYPES.map(f => <option key={f} value={f}>{f.charAt(0).toUpperCase() + f.slice(1)}</option>)}
                             </select>
                         </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+
+                    {/* Row 2 — Capacity, Density, Low Stock */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                         <div>
                             <label style={labelStyle}>Capacity (Litres) *</label>
-                            <input
-                                type="number"
-                                value={form.capacity_litres}
-                                onChange={e => setForm({ ...form, capacity_litres: e.target.value })}
-                                placeholder="e.g. 30000"
-                                style={inputStyle}
-                            />
+                            <input type="number" value={form.capacity_litres} onChange={e => setForm({ ...form, capacity_litres: e.target.value })} placeholder="e.g. 30000" style={inputStyle} />
                         </div>
                         <div>
                             <label style={labelStyle}>Fuel Density at 15°C</label>
-                            <input
-                                type="number"
-                                step="0.001"
-                                value={form.fuel_density_at_15c}
-                                onChange={e => setForm({ ...form, fuel_density_at_15c: e.target.value })}
-                                placeholder="e.g. 0.835"
-                                style={inputStyle}
-                            />
+                            <input type="number" step="0.001" value={form.fuel_density_at_15c} onChange={e => setForm({ ...form, fuel_density_at_15c: e.target.value })} placeholder="e.g. 0.835" style={inputStyle} />
                         </div>
                         <div>
                             <label style={labelStyle}>Low Stock Threshold (%)</label>
-                            <input
-                                type="number"
-                                value={form.low_stock_threshold_pct}
-                                onChange={e => setForm({ ...form, low_stock_threshold_pct: e.target.value })}
-                                placeholder="e.g. 20"
-                                style={inputStyle}
-                            />
+                            <input type="number" value={form.low_stock_threshold_pct} onChange={e => setForm({ ...form, low_stock_threshold_pct: e.target.value })} placeholder="e.g. 20" style={inputStyle} />
                         </div>
                     </div>
+
+                    {/* Row 3 — Deadwood, ATG Probe ID */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                        <div>
+                            <label style={labelStyle}>Deadwood Litres</label>
+                            <input type="number" step="0.01" value={form.deadwood_litres} onChange={e => setForm({ ...form, deadwood_litres: e.target.value })} placeholder="e.g. 150" style={inputStyle} />
+                            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '4px' }}>Fixed volume in pipework — unique to each tank</div>
+                        </div>
+                        <div>
+                            <label style={labelStyle}>ATG Probe ID</label>
+                            <input type="text" value={form.atg_probe_id} onChange={e => setForm({ ...form, atg_probe_id: e.target.value })} placeholder="e.g. PROBE-01 or T1" style={inputStyle} />
+                            <div style={{ fontSize: '11px', color: '#aaa', marginTop: '4px' }}>Links the physical ATG probe to this tank</div>
+                        </div>
+                    </div>
+
                     <div style={{ display: 'flex', gap: '10px' }}>
                         <button
                             onClick={handleSave}
@@ -297,7 +273,7 @@ export default function Tanks({ api }) {
                         </button>
                     </div>
 
-                    {/* ── CSV UPLOAD SECTION ── appears after tank is saved ── */}
+                    {/* CSV Upload Section */}
                     {savedTankId && (
                         <div style={{ marginTop: '24px', borderTop: '1px solid #e0e0e0', paddingTop: '20px' }}>
                             <div style={{ fontSize: '13px', fontWeight: '600', color: '#1a1a2e', marginBottom: '6px' }}>
@@ -306,51 +282,30 @@ export default function Tanks({ api }) {
                             <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px' }}>
                                 CSV must have two columns: <code>depth_mm</code> and <code>volume_litres</code>
                             </div>
-
-                            {/* Sample format hint */}
                             <div style={{ background: '#f8f8f8', borderRadius: '8px', padding: '10px 14px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '11px', color: '#555' }}>
-                                depth_mm,volume_litres<br />
-                                0,0<br />
-                                10,45<br />
-                                20,92<br />
-                                ...
+                                depth_mm,volume_litres<br />0,0<br />10,45<br />20,92<br />...
                             </div>
-
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                 <input
                                     id="csv-upload-input"
                                     type="file"
                                     accept=".csv"
-                                    onChange={e => {
-                                        setCsvFile(e.target.files[0]);
-                                        setUploadResult(null);
-                                        setUploadError('');
-                                    }}
+                                    onChange={e => { setCsvFile(e.target.files[0]); setUploadResult(null); setUploadError(''); }}
                                     style={{ fontSize: '13px' }}
                                 />
                                 <button
                                     onClick={handleCsvUpload}
                                     disabled={uploading || !csvFile}
-                                    style={{
-                                        padding: '9px 18px',
-                                        background: uploading || !csvFile ? '#ccc' : '#1a5276',
-                                        color: '#fff', border: 'none', borderRadius: '8px',
-                                        cursor: uploading || !csvFile ? 'not-allowed' : 'pointer',
-                                        fontSize: '13px', fontWeight: '600'
-                                    }}
+                                    style={{ padding: '9px 18px', background: uploading || !csvFile ? '#ccc' : '#1a5276', color: '#fff', border: 'none', borderRadius: '8px', cursor: uploading || !csvFile ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600' }}
                                 >
                                     {uploading ? 'Uploading...' : '⬆ Upload'}
                                 </button>
                             </div>
-
-                            {/* Upload error */}
                             {uploadError && (
                                 <div style={{ background: '#fdecea', color: '#721c24', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '10px' }}>
                                     ❌ {uploadError}
                                 </div>
                             )}
-
-                            {/* Upload success */}
                             {uploadResult && (
                                 <div style={{ background: '#eafaf1', color: '#1e8449', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '10px' }}>
                                     ✅ {uploadResult.message} ({uploadResult.rows_inserted} rows inserted)
@@ -389,9 +344,11 @@ export default function Tanks({ api }) {
                                         Density: <strong>{tank.fuel_density_at_15c}</strong> &nbsp;·&nbsp;
                                         Low stock: <strong>{tank.low_stock_threshold_pct}%</strong>
                                     </div>
-                                    <div style={{ fontSize: '11px', color: '#bbb', marginTop: '4px' }}>
-                                        ID: {tank.id}
+                                    <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                                        {tank.deadwood_litres ? `Deadwood: ${tank.deadwood_litres}L` : 'No deadwood set'} &nbsp;·&nbsp;
+                                        {tank.atg_probe_id ? `Probe: ${tank.atg_probe_id}` : 'No probe ID set'}
                                     </div>
+                                    <div style={{ fontSize: '11px', color: '#bbb', marginTop: '4px' }}>ID: {tank.id}</div>
                                 </div>
                                 <div style={{ display: 'flex', gap: '8px' }}>
                                     <button
