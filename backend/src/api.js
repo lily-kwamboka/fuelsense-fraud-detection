@@ -22,7 +22,7 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: (origin, cb) => cb(null, true),
+  origin: (origin, cb) => cb(null, true), // allow all — tighten after domain verified
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -51,6 +51,7 @@ function getRoleAccessLevel(role) {
 }
 
 // ── Multi-tenant: resolve caller's organization_id from supabase_uid ─────────
+// Returns { orgId, role, stationId, accessLevel } or null if not found
 async function resolveUser(db, supabaseUid) {
   if (!supabaseUid) return null;
   const res = await db.query(
@@ -96,16 +97,18 @@ app.get('/api/user-profile', async (req, res) => {
 });
 
 // ── GET /api/stations ─────────────────────────────────────────────────────────
+// Returns stations scoped to the caller's organization only
 app.get('/api/stations', async (req, res) => {
   try {
-    const client   = await getDb();
-    const user     = await resolveUser(client, req.query.uid);
+    const client = await getDb();
+    const user   = await resolveUser(client, req.query.uid);
 
     if (!user || !user.orgId) return res.json([]);
 
-    let query    = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
+    let query  = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
     const params = [user.orgId];
 
+    // Station-scoped roles: only see their assigned station
     if (user.accessLevel < 65 && user.stationId) {
       params.push(user.stationId);
       query += ` AND id = $2`;
@@ -131,6 +134,7 @@ app.get('/api/tanks', async (req, res) => {
     const params = [user.orgId];
     let where = `s.organization_id = $1`;
 
+    // Further filter by specific station if requested
     if (stationId) {
       params.push(stationId);
       where += ` AND t.station_id = $${params.length}`;
@@ -328,10 +332,10 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
         WHERE tank_id=$1 AND status IN ('confirmed','flagged') AND stabilisation_at::date=$2::date`,
       [tank_id, recon_date]
     );
-    const delivNSV = parseFloat(delivRes.rows[0].total) || 0;
-    const sales    = parseFloat(pump_sales_litres);
-    const theoCl   = openNSV + delivNSV - sales;
-    const variance = closeNSV - theoCl;
+    const delivNSV  = parseFloat(delivRes.rows[0].total) || 0;
+    const sales     = parseFloat(pump_sales_litres);
+    const theoCl    = openNSV + delivNSV - sales;
+    const variance  = closeNSV - theoCl;
 
     await client.query(
       `INSERT INTO daily_reconciliation (tank_id, recon_date, opening_nsv, closing_nsv, deliveries_nsv, pump_sales_litres, theoretical_closing, variance_litres)
@@ -487,12 +491,14 @@ app.get('/api/plans', async (req, res) => {
 });
 
 // ── GET /api/subscription ─────────────────────────────────────────────────────
+// Now org-scoped: pass uid to resolve org, or station_id for backwards compat
 app.get('/api/subscription', async (req, res) => {
   try {
-    const client    = await getDb();
+    const client = await getDb();
     const uid       = req.query.uid;
     const stationId = req.query.station_id;
-    let orgId       = null;
+
+    let orgId = null;
 
     if (uid) {
       const user = await resolveUser(client, uid);
@@ -504,6 +510,7 @@ app.get('/api/subscription', async (req, res) => {
 
     if (!orgId) return res.json(null);
 
+    // First try org-level subscription
     const orgSub = await client.query(
       `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
          FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id
@@ -512,6 +519,7 @@ app.get('/api/subscription', async (req, res) => {
     );
     if (orgSub.rows.length) return res.json(orgSub.rows[0]);
 
+    // Fall back to station-level subscription for backwards compat
     if (stationId) {
       const stSub = await client.query(
         `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
@@ -522,10 +530,16 @@ app.get('/api/subscription', async (req, res) => {
       if (stSub.rows.length) return res.json(stSub.rows[0]);
     }
 
+    // Check org trial status
     const org = await client.query(`SELECT * FROM organizations WHERE id=$1`, [orgId]);
     if (org.rows.length) {
       const o = org.rows[0];
-      return res.json({ status: o.subscription_status, trial_ends_at: o.trial_ends_at, plan_name: 'Trial', organization_id: orgId });
+      return res.json({
+        status: o.subscription_status,
+        trial_ends_at: o.trial_ends_at,
+        plan_name: 'Trial',
+        organization_id: orgId,
+      });
     }
 
     res.json(null);
@@ -549,10 +563,14 @@ app.post('/api/payments/initiate', async (req, res) => {
     } else {
       const planRes = await client.query(`SELECT * FROM subscription_plans WHERE id=$1`, [plan_id]);
       if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
-      plan   = planRes.rows[0];
+      plan = planRes.rows[0];
       amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
+      
+      // ✅ SANDBOX CAP - Add this line
+      if (process.env.PESAPAL_ENV !== 'live') amount = 100; // sandbox cap — remove when switching to live
     }
 
+    // Get org_id from station
     const stRes = await client.query(`SELECT organization_id FROM stations WHERE id=$1`, [station_id]);
     const orgId = stRes.rows[0]?.organization_id || null;
 
@@ -562,7 +580,7 @@ app.post('/api/payments/initiate', async (req, res) => {
       [station_id, orgId, amount, billing_cycle, plan.name]
     );
     const paymentId = payRes.rows[0].id;
-    const ipnId     = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
 
     const order = {
       id: paymentId, currency: 'KES', amount: parseFloat(amount),
@@ -595,7 +613,7 @@ app.get('/api/payments/callback', async (req, res) => {
         `UPDATE payments SET status='completed', pesapal_tracking_id=$1 WHERE id=$2`,
         [OrderTrackingId, OrderMerchantReference]
       );
-      const payRes  = await client.query(`SELECT * FROM payments WHERE id=$1`, [OrderMerchantReference]);
+      const payRes = await client.query(`SELECT * FROM payments WHERE id=$1`, [OrderMerchantReference]);
       const payment = payRes.rows[0];
 
       if (payment && payment.plan_name !== 'TEST_PAYMENT') {
@@ -604,8 +622,10 @@ app.get('/api/payments/callback', async (req, res) => {
         if (plan) {
           const now = new Date(), end = new Date(now);
           payment.billing_cycle === 'annual' ? end.setFullYear(end.getFullYear() + 1) : end.setMonth(end.getMonth() + 1);
+
           const orgId = payment.organization_id;
           if (orgId) {
+            // Org-level subscription (new model)
             await client.query(
               `INSERT INTO subscriptions (station_id, organization_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
                VALUES ($1,$2,$3,$4,'active',$5,$6)
@@ -614,6 +634,7 @@ app.get('/api/payments/callback', async (req, res) => {
                  current_period_start=EXCLUDED.current_period_start, current_period_end=EXCLUDED.current_period_end`,
               [payment.station_id, orgId, plan.id, payment.billing_cycle, now, end]
             );
+            // Update org subscription status
             await client.query(
               `UPDATE organizations SET subscription_status='active', plan_id=$1 WHERE id=$2`,
               [plan.id, orgId]
@@ -635,14 +656,16 @@ app.get('/api/payments/history', async (req, res) => {
   try {
     const client = await getDb();
     const { station_id, uid } = req.query;
-    const user   = uid ? await resolveUser(client, uid) : null;
+    const user = uid ? await resolveUser(client, uid) : null;
     const params = [];
-    let where    = '';
+    let where = '';
 
     if (user?.orgId) {
-      params.push(user.orgId); where = `WHERE organization_id = $${params.length}`;
+      params.push(user.orgId);
+      where = `WHERE organization_id = $${params.length}`;
     } else if (station_id) {
-      params.push(station_id); where = `WHERE station_id = $${params.length}`;
+      params.push(station_id);
+      where = `WHERE station_id = $${params.length}`;
     } else {
       return res.status(400).json({ error: 'station_id or uid required' });
     }
@@ -653,13 +676,14 @@ app.get('/api/payments/history', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── POST /api/payments/test ───────────────────────────────────────────────────
 app.post('/api/payments/test', async (req, res) => {
   const { station_id, amount, user_email, user_name, phone } = req.body;
   if (!amount || !user_email) return res.status(400).json({ error: 'Missing required fields: amount, user_email' });
   try {
-    const client     = await getDb();
-    const pesapal    = require('./pesapal');
-    const uuidRegex  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const client  = await getDb();
+    const pesapal = require('./pesapal');
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let realStationId = station_id;
     if (!station_id || !uuidRegex.test(station_id)) {
       const stRes = await client.query(`SELECT id FROM stations LIMIT 1`);
@@ -674,7 +698,7 @@ app.post('/api/payments/test', async (req, res) => {
       [realStationId, orgId, amount]
     );
     const paymentId = payRes.rows[0].id;
-    const ipnId     = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
     const pesapalRes = await pesapal.submitOrder({
       id: paymentId, currency: 'KES', amount: parseFloat(amount),
       description: `FuelSense Test Payment - KES ${amount}`,
@@ -700,15 +724,17 @@ app.get('/api/debug-pesapal', (req, res) => {
 });
 
 // ── SUPER ADMIN: manage organizations ────────────────────────────────────────
+// POST /api/admin/organizations — create new client org + invite owner
 app.post('/api/admin/organizations', async (req, res) => {
   const { admin_email, name, slug, owner_email, plan_id, max_stations, max_tanks } = req.body;
   if (!admin_email || !name || !owner_email)
     return res.status(400).json({ error: 'admin_email, name, owner_email required' });
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
+    // Resolve plan limits
     let maxSt = max_stations || 1, maxTk = max_tanks || 5;
     if (plan_id) {
       const planRes = await client.query(`SELECT max_stations, max_tanks FROM subscription_plans WHERE id=$1`, [plan_id]);
@@ -722,35 +748,40 @@ app.post('/api/admin/organizations', async (req, res) => {
     );
     const org = orgRes.rows[0];
     console.log('[SUPER-ADMIN] Created org:', org.name, '| owner:', owner_email);
-    res.status(201).json({ ok: true, organization: org, message: `Organization "${name}" created.` });
+    res.status(201).json({ ok: true, organization: org, message: `Organization "${name}" created. Invite ${owner_email} via Supabase Auth to complete setup.` });
   } catch (err) {
     console.error('[SUPER-ADMIN] Create org error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// GET /api/admin/organizations — list all orgs (super admin only)
 app.get('/api/admin/organizations', async (req, res) => {
   const { admin_email } = req.query;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
     const result = await client.query(`
-      SELECT o.*, COUNT(DISTINCT s.id) AS station_count, COUNT(DISTINCT u.id) AS user_count
+      SELECT o.*,
+             COUNT(DISTINCT s.id)  AS station_count,
+             COUNT(DISTINCT u.id)  AS user_count
         FROM organizations o
         LEFT JOIN stations s ON s.organization_id = o.id
         LEFT JOIN user_profiles u ON u.organization_id = o.id
-       GROUP BY o.id ORDER BY o.created_at DESC`
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`
     );
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/admin/organizations/:id — single org details
 app.get('/api/admin/organizations/:id', async (req, res) => {
   const { admin_email } = req.query;
   try {
-    const client  = await getDb();
+    const client = await getDb();
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
@@ -764,201 +795,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── ADMIN: Stations CRUD ──────────────────────────────────────────────────────
-app.get('/api/admin/stations', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `SELECT s.*, COUNT(t.id)::text AS tank_count, o.name AS organization_name
-         FROM stations s
-         LEFT JOIN tanks t ON t.station_id = s.id
-         LEFT JOIN organizations o ON o.id = s.organization_id
-         GROUP BY s.id, o.name
-         ORDER BY o.name, s.name`
-    );
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/stations', async (req, res) => {
-  const { name, location, organization_id } = req.body;
-  if (!name) return res.status(400).json({ error: 'Station name is required' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO stations (name, location, organization_id) VALUES ($1, $2, $3) RETURNING *`,
-      [name, location || null, organization_id || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/admin/stations/:id', async (req, res) => {
-  const { name, location, organization_id } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE stations SET name=$1, location=$2, organization_id=$3 WHERE id=$4 RETURNING *`,
-      [name, location || null, organization_id || null, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Station not found' });
-    res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/stations/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query(`DELETE FROM stations WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── ADMIN: Tanks CRUD ─────────────────────────────────────────────────────────
-app.get('/api/admin/tanks', async (req, res) => {
-  try {
-    const client    = await getDb();
-    const stationId = req.query.station_id;
-    let query  = `SELECT t.*, s.name AS station_name FROM tanks t JOIN stations s ON s.id = t.station_id`;
-    const params = [];
-    if (stationId) { params.push(stationId); query += ` WHERE t.station_id = $1`; }
-    query += ` ORDER BY s.name, t.tank_number`;
-    const result = await client.query(query, params);
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/tanks', async (req, res) => {
-  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
-  if (!station_id || !tank_number || !fuel_type || !capacity_litres)
-    return res.status(400).json({ error: 'Missing required fields' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO tanks (station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c || 0.835, low_stock_threshold_pct || 20]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/admin/tanks/:id', async (req, res) => {
-  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE tanks SET station_id=$1, tank_number=$2, fuel_type=$3, capacity_litres=$4, fuel_density_at_15c=$5, low_stock_threshold_pct=$6 WHERE id=$7 RETURNING *`,
-      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Tank not found' });
-    res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/tanks/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query(`DELETE FROM tanks WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── ADMIN: Users CRUD ─────────────────────────────────────────────────────────
-app.get('/api/admin/users', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `SELECT u.*, s.name AS station_name, o.name AS organization_name
-         FROM user_profiles u
-         LEFT JOIN stations s ON s.id = u.station_id
-         LEFT JOIN organizations o ON o.id = u.organization_id
-         ORDER BY u.email`
-    );
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/users', async (req, res) => {
-  const { supabase_uid, email, full_name, role, station_id, organization_id } = req.body;
-  if (!supabase_uid || !email) return res.status(400).json({ error: 'supabase_uid and email are required' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO user_profiles (supabase_uid, email, full_name, role, station_id, organization_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [supabase_uid, email, full_name || null, role || 'attendant', station_id || null, organization_id || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/admin/users/:id', async (req, res) => {
-  const { email, full_name, role, station_id, organization_id } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE user_profiles SET email=$1, full_name=$2, role=$3, station_id=$4, organization_id=$5 WHERE id=$6 RETURNING *`,
-      [email, full_name || null, role, station_id || null, organization_id || null, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/users/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query(`DELETE FROM user_profiles WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── ADMIN: Suppliers CRUD ─────────────────────────────────────────────────────
-app.get('/api/admin/suppliers', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(`SELECT * FROM suppliers ORDER BY name`);
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/suppliers', async (req, res) => {
-  const { name, contact_name, phone, email, address } = req.body;
-  if (!name) return res.status(400).json({ error: 'Supplier name is required' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO suppliers (name, contact_name, phone, email, address, is_active)
-       VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
-      [name, contact_name || null, phone || null, email || null, address || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/admin/suppliers/:id', async (req, res) => {
-  const { name, contact_name, phone, email, address, is_active } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, is_active=$6 WHERE id=$7 RETURNING *`,
-      [name, contact_name || null, phone || null, email || null, address || null, is_active !== undefined ? is_active : true, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
-    res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/suppliers/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query(`DELETE FROM suppliers WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── PUT /api/admin/user-profiles/:uid ────────────────────────────────────────
+// PUT /api/admin/user-profiles/:uid — update a user's role or station
 app.put('/api/admin/user-profiles/:uid', async (req, res) => {
   const { admin_email, role, station_id } = req.body;
   try {
@@ -966,6 +803,7 @@ app.put('/api/admin/user-profiles/:uid', async (req, res) => {
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
     if (!role) return res.status(400).json({ error: 'role required' });
+
     await client.query(
       `UPDATE user_profiles SET role=$1, station_id=$2 WHERE supabase_uid=$3`,
       [role, station_id || null, req.params.uid]
@@ -983,15 +821,17 @@ app.post('/api/stations', async (req, res) => {
     const user   = await resolveUser(client, uid);
     if (!user || user.accessLevel < 100) return res.status(403).json({ error: 'Owner access required' });
 
-    const org      = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
+    // Check station limit
+    const org = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
     const countRes = await client.query(`SELECT COUNT(*) AS count FROM stations WHERE organization_id=$1`, [user.orgId]);
-    const current  = parseInt(countRes.rows[0].count);
-    const maxSt    = org.rows[0]?.max_stations || 1;
+    const current = parseInt(countRes.rows[0].count);
+    const maxSt   = org.rows[0]?.max_stations || 1;
     if (maxSt !== -1 && current >= maxSt)
       return res.status(403).json({ error: `Station limit reached (${maxSt}). Upgrade your plan to add more stations.` });
 
     const result = await client.query(
-      `INSERT INTO stations (name, location, timezone, organization_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+      `INSERT INTO stations (name, location, timezone, organization_id)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
       [name, location || '', timezone || 'Africa/Nairobi', user.orgId]
     );
     console.log('[API] Station created:', result.rows[0].name, '| org:', user.orgId);
@@ -1019,6 +859,7 @@ async function checkExpiredSubscriptions() {
     );
     if (result.rows.length) {
       console.log(`[CRON] Expired ${result.rows.length} subscription(s)`);
+      // Also update org status if all their subs expired
       for (const row of result.rows) {
         if (row.organization_id) {
           await client.query(
@@ -1049,7 +890,8 @@ async function checkUpcomingRenewals() {
   try {
     const client = await getDb();
     const result = await client.query(
-      `SELECT s.organization_id, s.current_period_end, p.name AS plan_name, o.owner_email
+      `SELECT s.organization_id, s.current_period_end, p.name AS plan_name,
+              o.owner_email
          FROM subscriptions s
          JOIN subscription_plans p ON p.id=s.plan_id
          JOIN organizations o ON o.id=s.organization_id
@@ -1070,8 +912,8 @@ setTimeout(async () => { await checkExpiredSubscriptions(); await checkUpcomingR
 // ── ATG Scheduler ─────────────────────────────────────────────────────────────
 setTimeout(async () => {
   try {
-    const { getInventory } = require('./atg-client');
-    const { calculateNSV } = require('./measurement-engine');
+    const { getInventory }  = require('./atg-client');
+    const { calculateNSV }  = require('./measurement-engine');
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
     const STABLE_CYCLES_REQUIRED  = 10;
@@ -1087,7 +929,7 @@ setTimeout(async () => {
         try {
           const tankRes = await client.query('SELECT * FROM tanks WHERE tank_number=$1 LIMIT 1', [reading.tankNumber]);
           if (!tankRes.rows[0]) { console.warn('[scheduler] No tank for probe ' + reading.tankNumber); continue; }
-          const t       = tankRes.rows[0];
+          const t = tankRes.rows[0];
           const volumes = await calculateNSV(client, t.id, reading.innageMm, reading.waterMm, reading.tempC);
 
           await client.query(
@@ -1103,10 +945,7 @@ setTimeout(async () => {
           await checkLowStockAlert(client, t.id, t.tank_number, t.fuel_type, fillPct, parseFloat(t.low_stock_threshold_pct));
 
           const state = tankState[t.id];
-          if (!state) {
-            tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' };
-            continue;
-          }
+          if (!state) { tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' }; continue; }
           const delta = reading.innageMm - state.lastInnageMm;
           if (delta > DELIVERY_RISE_THRESHOLD) {
             state.stableCycles = 0;
@@ -1135,7 +974,7 @@ setTimeout(async () => {
     await pollCycle();
     setInterval(pollCycle, 60000);
     console.log('[scheduler] Started inside API process ✓');
-  } catch (err) { console.error('[scheduler] Failed to start:', err); }
+  } catch (err) { console.error('[scheduler] Failed to start:', err.message); }
 }, 3000);
 
 module.exports = app;
