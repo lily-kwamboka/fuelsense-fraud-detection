@@ -7,7 +7,6 @@ const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
-const nodemailer = require('nodemailer');
 
 const app          = express();
 const PORT         = process.env.API_PORT || 3001;
@@ -24,6 +23,15 @@ app.use(cors({
 
 app.use(express.json());
 
+// ── Initialize Resend ────────────────────────────────────────────────────────
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+if (resend) {
+  console.log('[EMAIL] Resend initialized for contact form');
+} else {
+  console.log('[EMAIL] Resend not configured - contact form will log only');
+}
+
 // ── POST /api/contact/enterprise ─────────────────────────────────────────────
 app.post('/api/contact/enterprise', async (req, res) => {
   console.log('[CONTACT] Request received:', req.body);
@@ -38,78 +46,63 @@ app.post('/api/contact/enterprise', async (req, res) => {
     });
   }
 
-  // Check Gmail configuration
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailPass = process.env.GMAIL_APP_PASSWORD;
-  
-  console.log('[CONTACT] GMAIL_USER configured:', !!gmailUser);
-  console.log('[CONTACT] GMAIL_APP_PASSWORD configured:', !!gmailPass);
-
-  // If Gmail is not configured, log but still return success
-  if (!gmailUser || !gmailPass) {
-    console.log('[CONTACT] Gmail not configured - enquiry logged but email not sent');
+  // If Resend is not configured, log and return success
+  if (!resend) {
+    console.log('[CONTACT] Resend not configured - enquiry logged but email not sent');
     return res.json({ 
       success: true, 
       message: 'Enquiry received! Our team will contact you within 24 hours.',
-      note: 'Email notification not sent (Gmail not configured)'
+      note: 'Email notification not sent (Resend not configured)'
     });
   }
 
   try {
-    // Create email transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: gmailUser,
-        pass: gmailPass
-      },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
-    });
-
-    // Verify connection - this catches configuration errors early
-    try {
-      await transporter.verify();
-      console.log('[CONTACT] Gmail transporter verified');
-    } catch (verifyErr) {
-      console.error('[CONTACT] Gmail verification failed:', verifyErr.message);
-      return res.json({ 
-        success: true, 
-        message: 'Enquiry received! Our team will contact you within 24 hours.',
-        note: 'We are experiencing technical issues with email delivery.'
-      });
-    }
-
-    // Send email to bernicewakarindi@gmail.com
-    const mailOptions = {
-      from: `"FuelSense" <${gmailUser}>`,
+    // Send email using Resend
+    const { data, error } = await resend.emails.send({
+      from: 'FuelSense <noreply@fuelsense.com>',
       to: 'bernicewakarindi@gmail.com',
       replyTo: email,
       subject: `Enterprise Enquiry — ${company}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h2 style="color: #1a1a2e; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">⛽ FuelSense — Enterprise Enquiry</h2>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr><td style="padding: 8px 0; font-weight: bold;">Name:</td><td style="padding: 8px 0;">${name}</td></tr>
-            <tr><td style="padding: 8px 0; font-weight: bold;">Email:</td><td style="padding: 8px 0;"><a href="mailto:${email}">${email}</a></td></tr>
-            <tr><td style="padding: 8px 0; font-weight: bold;">Phone:</td><td style="padding: 8px 0;">${phone || 'Not provided'}</td></tr>
-            <tr><td style="padding: 8px 0; font-weight: bold;">Company:</td><td style="padding: 8px 0;">${company}</td></tr>
-            <tr><td style="padding: 8px 0; font-weight: bold;">Stations:</td><td style="padding: 8px 0;">${stations || 'Not specified'}</td></tr>
-            <tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Message:</td><td style="padding: 8px 0;">${message || 'No message provided'}</td></tr>
-          </table>
-          <p style="margin-top: 20px; color: #666; font-size: 12px;">This enquiry was submitted from the FuelSense billing page.</p>
+          <div style="background: #1a1a2e; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+            <h2 style="color: #4CAF50; margin: 0;">⛽ FuelSense</h2>
+            <p style="color: #fff; margin: 5px 0 0;">Enterprise Enquiry</p>
+          </div>
+          <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Name:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${name}</td></tr>
+              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;"><a href="mailto:${email}">${email}</a></td></tr>
+              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Phone:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${phone || 'Not provided'}</td></tr>
+              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Company:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${company}</td></tr>
+              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Stations:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${stations || 'Not specified'}</td></tr>
+              <tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Message:</td><td style="padding: 8px 0;">${message || 'No message provided'}</td></tr>
+            </table>
+            <p style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">This enquiry was submitted from the FuelSense billing page.</p>
+          </div>
+          <div style="background: #f5f5f5; padding: 10px; border-radius: 0 0 8px 8px; text-align: center; font-size: 11px; color: #999;">
+            FuelSense · Mafuta Salama · © ${new Date().getFullYear()}
+          </div>
         </div>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log('[CONTACT] Email sent successfully! Message ID:', info.messageId);
+    if (error) {
+      console.error('[CONTACT] Resend error:', error);
+      return res.json({ 
+        success: true, 
+        message: 'Enquiry received! Our team will contact you within 24 hours.',
+        note: 'We encountered a technical issue with email delivery.'
+      });
+    }
+
+    console.log('[CONTACT] Email sent via Resend! Message ID:', data?.id);
+    console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
     
     res.json({ 
       success: true, 
       message: 'Enquiry sent successfully! Our team will contact you within 24 hours.',
-      messageId: info.messageId
+      messageId: data?.id
     });
 
   } catch (error) {
@@ -123,9 +116,6 @@ app.post('/api/contact/enterprise', async (req, res) => {
     });
   }
 });
-
-// ── Initialize Resend ────────────────────────────────────────────────────────
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 let db = null;
@@ -953,11 +943,14 @@ async function sendRenewalReminder(orgId, daysLeft, userEmail, planName) {
   if (!resend) return;
   try {
     await resend.emails.send({
-      from: 'FuelSense <noreply@fuelsense.com>', to: userEmail,
+      from: 'FuelSense <noreply@fuelsense.com>',
+      to: userEmail,
       subject: `Your ${planName} plan renews in ${daysLeft} days`,
       html: `<p>Your <strong>${planName}</strong> plan renews in <strong>${daysLeft} days</strong>. <a href="${process.env.FRONTEND_URL}/?tab=pricing">Manage subscription</a></p>`
     });
-  } catch (err) { console.error('[EMAIL] Renewal reminder failed:', err.message); }
+  } catch (err) {
+    console.error('[EMAIL] Renewal reminder failed:', err.message);
+  }
 }
 
 async function checkUpcomingRenewals() {
@@ -976,33 +969,48 @@ async function checkUpcomingRenewals() {
       const daysLeft = Math.ceil((new Date(row.current_period_end) - new Date()) / 86400000);
       await sendRenewalReminder(row.organization_id, daysLeft, row.owner_email, row.plan_name);
     }
-  } catch (err) { console.error('[CRON] checkUpcomingRenewals:', err.message); }
+  } catch (err) {
+    console.error('[CRON] checkUpcomingRenewals:', err.message);
+  }
 }
 
 setInterval(checkExpiredSubscriptions, 60 * 60 * 1000);
-setInterval(checkUpcomingRenewals,     6  * 60 * 60 * 1000);
-setTimeout(async () => { await checkExpiredSubscriptions(); await checkUpcomingRenewals(); }, 5000);
+setInterval(checkUpcomingRenewals, 6 * 60 * 60 * 1000);
+setTimeout(async () => {
+  await checkExpiredSubscriptions();
+  await checkUpcomingRenewals();
+}, 5000);
 
 // ── ATG Scheduler ─────────────────────────────────────────────────────────────
 setTimeout(async () => {
   try {
-    const { getInventory }  = require('./atg-client');
-    const { calculateNSV }  = require('./measurement-engine');
+    const { getInventory } = require('./atg-client');
+    const { calculateNSV } = require('./measurement-engine');
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
-    const STABLE_CYCLES_REQUIRED  = 10;
+    const STABLE_CYCLES_REQUIRED = 10;
 
     async function pollCycle() {
       console.log('[scheduler] Poll cycle started at ' + new Date().toISOString());
       let readings;
-      try { readings = await getInventory(); }
-      catch (err) { console.error('[scheduler] ATG error:', err.message); return; }
+      try {
+        readings = await getInventory();
+      } catch (err) {
+        console.error('[scheduler] ATG error:', err.message);
+        return;
+      }
 
       const client = await getDb();
       for (const reading of readings) {
         try {
-          const tankRes = await client.query('SELECT * FROM tanks WHERE tank_number=$1 LIMIT 1', [reading.tankNumber]);
-          if (!tankRes.rows[0]) { console.warn('[scheduler] No tank for probe ' + reading.tankNumber); continue; }
+          const tankRes = await client.query(
+            'SELECT * FROM tanks WHERE tank_number = $1 LIMIT 1',
+            [reading.tankNumber]
+          );
+          if (!tankRes.rows[0]) {
+            console.warn('[scheduler] No tank for probe ' + reading.tankNumber);
+            continue;
+          }
           const t = tankRes.rows[0];
           const volumes = await calculateNSV(client, t.id, reading.innageMm, reading.waterMm, reading.tempC);
 
@@ -1010,7 +1018,7 @@ setTimeout(async () => {
             `INSERT INTO atg_readings (id, tank_id, recorded_at, innage_mm, water_mm, temperature_c, tov_litres, water_litres, gov_litres, vcf, nsv_litres, is_locked)
              VALUES (gen_random_uuid(),$1,NOW(),$2,$3,$4,$5,$6,$7,$8,$9,FALSE)`,
             [t.id, reading.innageMm, reading.waterMm, reading.tempC,
-             volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
+              volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
           );
           console.log('[scheduler] Saved | tank ' + t.tank_number + ' (' + reading.product + ') | innage: ' + reading.innageMm + 'mm | nsv: ' + volumes.nsv_litres + 'L');
 
@@ -1019,7 +1027,10 @@ setTimeout(async () => {
           await checkLowStockAlert(client, t.id, t.tank_number, t.fuel_type, fillPct, parseFloat(t.low_stock_threshold_pct));
 
           const state = tankState[t.id];
-          if (!state) { tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' }; continue; }
+          if (!state) {
+            tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' };
+            continue;
+          }
           const delta = reading.innageMm - state.lastInnageMm;
           if (delta > DELIVERY_RISE_THRESHOLD) {
             state.stableCycles = 0;
@@ -1028,19 +1039,26 @@ setTimeout(async () => {
                 `INSERT INTO deliveries (id, tank_id, status, offload_started_at) VALUES (gen_random_uuid(),$1,'in_progress',NOW()) RETURNING id`,
                 [t.id]
               );
-              state.deliveryId = dRes.rows[0].id; state.deliveryStatus = 'in_progress';
+              state.deliveryId = dRes.rows[0].id;
+              state.deliveryStatus = 'in_progress';
               console.log('[scheduler] DELIVERY STARTED tank ' + t.tank_number);
             }
           } else if (state.deliveryStatus === 'in_progress') {
             state.stableCycles++;
             if (state.stableCycles >= STABLE_CYCLES_REQUIRED) {
-              await client.query(`UPDATE deliveries SET offload_ended_at=NOW(), status='awaiting_stabilisation' WHERE id=$1`, [state.deliveryId]);
-              state.deliveryStatus = 'awaiting_stabilisation'; state.stableCycles = 0;
+              await client.query(
+                `UPDATE deliveries SET offload_ended_at=NOW(), status='awaiting_stabilisation' WHERE id=$1`,
+                [state.deliveryId]
+              );
+              state.deliveryStatus = 'awaiting_stabilisation';
+              state.stableCycles = 0;
               console.log('[scheduler] OFFLOAD ENDED delivery ' + state.deliveryId);
             }
           }
           state.lastInnageMm = reading.innageMm;
-        } catch (err) { console.error('[scheduler] Error processing tank ' + reading.tankNumber + ':', err.message); }
+        } catch (err) {
+          console.error('[scheduler] Error processing tank ' + reading.tankNumber + ':', err.message);
+        }
       }
       console.log('[scheduler] Poll cycle complete\n');
     }
@@ -1048,7 +1066,9 @@ setTimeout(async () => {
     await pollCycle();
     setInterval(pollCycle, 60000);
     console.log('[scheduler] Started inside API process ✓');
-  } catch (err) { console.error('[scheduler] Failed to start:', err.message); }
+  } catch (err) {
+    console.error('[scheduler] Failed to start:', err.message);
+  }
 }, 3000);
 
 module.exports = app;
