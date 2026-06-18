@@ -842,6 +842,57 @@ app.post('/api/stations', async (req, res) => {
   }
 });
 
+// ── POST /api/contact/enterprise ─────────────────────────────────────────────
+app.post('/api/contact/enterprise', async (req, res) => {
+  const { name, email, phone, company, stations, message } = req.body;
+  if (!name || !email || !company) return res.status(400).json({ error: 'Name, email and company are required' });
+
+  const nodemailer = require('nodemailer');
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    console.log('[CONTACT] Gmail not configured — logging enquiry:', req.body);
+    return res.json({ ok: true });
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+
+    await transporter.sendMail({
+      from: `"FuelSense Contact" <${process.env.GMAIL_USER}>`,
+      to:   process.env.GMAIL_USER,
+      replyTo: email,
+      subject: `🏢 Enterprise Enquiry — ${company}`,
+      html: `
+        <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;">
+          <div style="background:#1a1a2e;padding:20px 24px;border-radius:12px 12px 0 0;">
+            <div style="color:#fff;font-size:18px;font-weight:700;">⛽ FuelSense — Enterprise Enquiry</div>
+            <div style="color:#4CAF50;font-size:12px;margin-top:4px;">New lead from the billing page</div>
+          </div>
+          <div style="background:#fff;padding:24px;border-radius:0 0 12px 12px;border:1px solid #e0e0e0;">
+            <table style="width:100%;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;width:140px;">Name</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${name}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Email</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;"><a href="mailto:${email}">${email}</a></td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Phone</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${phone || 'Not provided'}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Company</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${company}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations}</td></tr>
+              <tr><td style="padding:10px 0;color:#666;font-size:13px;vertical-align:top;">Message</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${message || 'No message'}</td></tr>
+            </table>
+          </div>
+          <div style="text-align:center;padding:12px;color:#999;font-size:11px;">FuelSense · Mafuta Salama · Enterprise Sales</div>
+        </div>
+      `,
+    });
+
+    console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[CONTACT] Failed to send enquiry email:', err.message);
+    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
+  }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
