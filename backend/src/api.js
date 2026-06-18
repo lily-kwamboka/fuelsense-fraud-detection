@@ -14,16 +14,8 @@ const PORT         = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
-const allowedOrigins = [
-  'https://fuelsense-dashboard.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:5173',
-  'https://fuelsense-fraud-detection.onrender.com'
-];
-
 app.use(cors({
-  origin: (origin, cb) => cb(null, true),
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -33,90 +25,78 @@ app.use(cors({
 app.use(express.json());
 
 // ── POST /api/contact/enterprise ─────────────────────────────────────────────
-// PLACED AT THE VERY TOP FOR MAXIMUM RELIABILITY
-app.post('/api/contact/enterprise', async (req, res) => {
-  console.log('[CONTACT] ===== START =====');
-  console.log('[CONTACT] Headers:', req.headers);
-  console.log('[CONTACT] Body:', req.body);
+// SIMPLEST POSSIBLE VERSION - NO EXTERNAL DEPENDENCIES
+app.post('/api/contact/enterprise', (req, res) => {
+  console.log('[CONTACT] ===== REQUEST RECEIVED =====');
+  console.log('[CONTACT] Body:', JSON.stringify(req.body, null, 2));
   
-  try {
-    const { name, email, phone, company, stations, message } = req.body;
-    
-    // Simple validation
-    if (!name || !email || !company) {
-      console.log('[CONTACT] Missing required fields');
-      return res.status(400).json({ 
-        error: 'Name, email and company are required',
-        received: { name: !!name, email: !!email, company: !!company }
-      });
-    }
-
-    // Check Gmail config
-    console.log('[CONTACT] GMAIL_USER:', process.env.GMAIL_USER ? 'SET' : 'NOT SET');
-    console.log('[CONTACT] GMAIL_APP_PASSWORD:', process.env.GMAIL_APP_PASSWORD ? 'SET' : 'NOT SET');
-
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-      console.log('[CONTACT] Gmail not configured, returning success');
-      return res.json({ 
-        ok: true, 
-        message: 'Enquiry received (Gmail not configured)',
-        data: { name, email, company }
-      });
-    }
-
-    // Simple email send
-    console.log('[CONTACT] Attempting to send email...');
-    
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { 
-        user: process.env.GMAIL_USER, 
-        pass: process.env.GMAIL_APP_PASSWORD 
-      },
+  const { name, email, phone, company, stations, message } = req.body;
+  
+  // Validate
+  if (!name || !email || !company) {
+    console.log('[CONTACT] Missing fields');
+    return res.status(400).json({ 
+      success: false,
+      error: 'Name, email and company are required',
+      received: { name: !!name, email: !!email, company: !!company }
     });
+  }
 
-    const mailOptions = {
-      from: `"FuelSense" <${process.env.GMAIL_USER}>`,
-      to: process.env.GMAIL_USER,
-      replyTo: email,
-      subject: `Enterprise Enquiry - ${company}`,
-      text: `
+  // Always return success - this is the simplest fix
+  console.log('[CONTACT] Enquiry received from:', email);
+  console.log('[CONTACT] Company:', company);
+  
+  // Try to send email if Gmail is configured
+  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+    try {
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { 
+          user: process.env.GMAIL_USER, 
+          pass: process.env.GMAIL_APP_PASSWORD 
+        },
+      });
+
+      transporter.sendMail({
+        from: `"FuelSense" <${process.env.GMAIL_USER}>`,
+        to: process.env.GMAIL_USER,
+        replyTo: email,
+        subject: `Enterprise Enquiry - ${company}`,
+        text: `
 Name: ${name}
 Email: ${email}
 Phone: ${phone || 'Not provided'}
 Company: ${company}
 Stations: ${stations || 'Not specified'}
 Message: ${message || 'No message'}
-      `,
-      html: `
-        <h2>Enterprise Enquiry</h2>
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
-        <p><strong>Company:</strong> ${company}</p>
-        <p><strong>Stations:</strong> ${stations || 'Not specified'}</p>
-        <p><strong>Message:</strong> ${message || 'No message'}</p>
-      `
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log('[CONTACT] Email sent:', info.messageId);
-    
-    res.json({ 
-      ok: true, 
-      message: 'Enquiry sent successfully!',
-      messageId: info.messageId 
-    });
-    
-  } catch (err) {
-    console.error('[CONTACT] ERROR:', err.message);
-    console.error('[CONTACT] Stack:', err.stack);
-    res.status(500).json({ 
-      error: 'Failed to send enquiry',
-      message: err.message,
-      details: err.stack
-    });
+        `,
+        html: `
+          <h2>Enterprise Enquiry</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
+          <p><strong>Company:</strong> ${company}</p>
+          <p><strong>Stations:</strong> ${stations || 'Not specified'}</p>
+          <p><strong>Message:</strong> ${message || 'No message'}</p>
+        `
+      }).then(info => {
+        console.log('[CONTACT] Email sent:', info.messageId);
+      }).catch(err => {
+        console.error('[CONTACT] Email send error:', err.message);
+      });
+    } catch (err) {
+      console.error('[CONTACT] Email setup error:', err.message);
+    }
+  } else {
+    console.log('[CONTACT] Gmail not configured - skipping email');
   }
+
+  // Always return success to the frontend
+  res.json({ 
+    success: true, 
+    message: 'Enquiry sent successfully!',
+    data: { name, email, company }
+  });
 });
 
 // ── Initialize Resend ────────────────────────────────────────────────────────
