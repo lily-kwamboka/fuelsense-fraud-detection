@@ -7,6 +7,7 @@ const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const app          = express();
 const PORT         = process.env.API_PORT || 3001;
@@ -35,85 +36,54 @@ if (resend) {
 // ── POST /api/contact/enterprise ─────────────────────────────────────────────
 app.post('/api/contact/enterprise', async (req, res) => {
   console.log('[CONTACT] Request received:', req.body);
-  
   const { name, email, phone, company, stations, message } = req.body;
   
-  // Validate required fields
   if (!name || !email || !company) {
-    return res.status(400).json({ 
-      success: false,
-      error: 'Name, email and company are required'
-    });
+    return res.status(400).json({ error: 'Name, email and company are required' });
   }
 
-  // If Resend is not configured, log and return success
-  if (!resend) {
-    console.log('[CONTACT] Resend not configured - enquiry logged but email not sent');
-    return res.json({ 
-      success: true, 
-      message: 'Enquiry received! Our team will contact you within 24 hours.',
-      note: 'Email notification not sent (Resend not configured)'
-    });
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    console.log('[CONTACT] Gmail not configured — enquiry logged:', req.body);
+    return res.json({ ok: true });
   }
 
   try {
-    // Send email using Resend with Gmail from address
-    const { data, error } = await resend.emails.send({
-      from: `"FuelSense Contact" <${process.env.GMAIL_USER || 'noreply@fuelsense.com'}>`,
-      to: 'bernicewakarindi@gmail.com',
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+
+    await transporter.sendMail({
+      from: `"FuelSense Contact" <${process.env.GMAIL_USER}>`,
+      to:   process.env.GMAIL_USER,
       replyTo: email,
-      subject: `Enterprise Enquiry — ${company}`,
+      subject: `🏢 Enterprise Enquiry — ${company}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <div style="background: #1a1a2e; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
-            <h2 style="color: #4CAF50; margin: 0;">⛽ FuelSense</h2>
-            <p style="color: #fff; margin: 5px 0 0;">Enterprise Enquiry</p>
+        <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;">
+          <div style="background:#1a1a2e;padding:20px 24px;border-radius:12px 12px 0 0;">
+            <div style="color:#fff;font-size:18px;font-weight:700;">⛽ FuelSense — Enterprise Enquiry</div>
+            <div style="color:#4CAF50;font-size:12px;margin-top:4px;">New lead from the billing page</div>
           </div>
-          <div style="padding: 20px;">
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Name:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${name}</td></tr>
-              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;"><a href="mailto:${email}">${email}</a></td></tr>
-              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Phone:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${phone || 'Not provided'}</td></tr>
-              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Company:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${company}</td></tr>
-              <tr><td style="padding: 8px 0; font-weight: bold; border-bottom: 1px solid #f0f0f0;">Stations:</td><td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${stations || 'Not specified'}</td></tr>
-              <tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Message:</td><td style="padding: 8px 0;">${message || 'No message provided'}</td></tr>
+          <div style="background:#fff;padding:24px;border-radius:0 0 12px 12px;border:1px solid #e0e0e0;">
+            <table style="width:100%;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;width:140px;">Name</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${name}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Email</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;"><a href="mailto:${email}">${email}</a></td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Phone</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${phone || 'Not provided'}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Company</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${company}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations}</td></tr>
+              <tr><td style="padding:10px 0;color:#666;font-size:13px;vertical-align:top;">Message</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${message || 'No message'}</td></tr>
             </table>
-            <p style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">This enquiry was submitted from the FuelSense billing page.</p>
           </div>
-          <div style="background: #f5f5f5; padding: 10px; border-radius: 0 0 8px 8px; text-align: center; font-size: 11px; color: #999;">
-            FuelSense · Mafuta Salama · © ${new Date().getFullYear()}
-          </div>
+          <div style="text-align:center;padding:12px;color:#999;font-size:11px;">FuelSense · Mafuta Salama · Enterprise Sales</div>
         </div>
-      `
+      `,
     });
 
-    if (error) {
-      console.error('[CONTACT] Resend error:', error);
-      return res.json({ 
-        success: true, 
-        message: 'Enquiry received! Our team will contact you within 24 hours.',
-        note: 'We encountered a technical issue with email delivery.'
-      });
-    }
-
-    console.log('[CONTACT] Email sent via Resend! Message ID:', data?.id);
     console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
-    
-    res.json({ 
-      success: true, 
-      message: 'Enquiry sent successfully! Our team will contact you within 24 hours.',
-      messageId: data?.id
-    });
-
-  } catch (error) {
-    console.error('[CONTACT] Error sending email:', error.message);
-    console.error('[CONTACT] Full error:', error);
-    
-    res.json({ 
-      success: true, 
-      message: 'Enquiry received! Our team will contact you within 24 hours.',
-      note: 'Your enquiry has been logged.'
-    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[CONTACT] Failed to send enquiry email:', err.message);
+    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
   }
 });
 
