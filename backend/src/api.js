@@ -7,7 +7,6 @@ const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
-const nodemailer = require('nodemailer');
 
 const app          = express();
 const PORT         = process.env.API_PORT || 3001;
@@ -42,20 +41,12 @@ app.post('/api/contact/enterprise', async (req, res) => {
     return res.status(400).json({ error: 'Name, email and company are required' });
   }
 
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    console.log('[CONTACT] Gmail not configured — enquiry logged:', req.body);
-    return res.json({ ok: true });
-  }
-
   try {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
-    });
-
-    await transporter.sendMail({
-      from: `"FuelSense Contact" <${process.env.GMAIL_USER}>`,
-      to:   process.env.GMAIL_USER,
+    if (!resend) throw new Error('Resend not configured');
+    
+    const { error } = await resend.emails.send({
+      from:    process.env.ALERT_FROM_EMAIL || 'onboarding@resend.dev',
+      to:      'bernicewakarindi@gmail.com',
       replyTo: email,
       subject: `🏢 Enterprise Enquiry — ${company}`,
       html: `
@@ -79,11 +70,12 @@ app.post('/api/contact/enterprise', async (req, res) => {
       `,
     });
 
+    if (error) throw new Error(error.message);
     console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
     res.json({ ok: true });
   } catch (err) {
-    console.error('[CONTACT] Failed to send enquiry email:', err.message, err.code, JSON.stringify(err));
-    res.status(500).json({ error: err.message });
+    console.error('[CONTACT] Failed to send enquiry email:', err.message);
+    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
   }
 });
 
