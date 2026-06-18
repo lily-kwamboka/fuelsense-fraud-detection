@@ -45,7 +45,7 @@ app.post('/api/contact/enterprise', async (req, res) => {
   console.log('[CONTACT] GMAIL_USER configured:', !!gmailUser);
   console.log('[CONTACT] GMAIL_APP_PASSWORD configured:', !!gmailPass);
 
-  // If Gmail is not configured, still return success but log the enquiry
+  // If Gmail is not configured, log but still return success
   if (!gmailUser || !gmailPass) {
     console.log('[CONTACT] Gmail not configured - enquiry logged but email not sent');
     return res.json({ 
@@ -62,15 +62,27 @@ app.post('/api/contact/enterprise', async (req, res) => {
       auth: {
         user: gmailUser,
         pass: gmailPass
-      }
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
 
-    // Verify connection
-    await transporter.verify();
-    console.log('[CONTACT] Gmail transporter verified');
+    // Verify connection - this catches configuration errors early
+    try {
+      await transporter.verify();
+      console.log('[CONTACT] Gmail transporter verified');
+    } catch (verifyErr) {
+      console.error('[CONTACT] Gmail verification failed:', verifyErr.message);
+      return res.json({ 
+        success: true, 
+        message: 'Enquiry received! Our team will contact you within 24 hours.',
+        note: 'We are experiencing technical issues with email delivery.'
+      });
+    }
 
-    // Send email
-    const info = await transporter.sendMail({
+    // Send email to bernicewakarindi@gmail.com
+    const mailOptions = {
       from: `"FuelSense" <${gmailUser}>`,
       to: 'bernicewakarindi@gmail.com',
       replyTo: email,
@@ -89,8 +101,9 @@ app.post('/api/contact/enterprise', async (req, res) => {
           <p style="margin-top: 20px; color: #666; font-size: 12px;">This enquiry was submitted from the FuelSense billing page.</p>
         </div>
       `
-    });
+    };
 
+    const info = await transporter.sendMail(mailOptions);
     console.log('[CONTACT] Email sent successfully! Message ID:', info.messageId);
     
     res.json({ 
@@ -103,11 +116,10 @@ app.post('/api/contact/enterprise', async (req, res) => {
     console.error('[CONTACT] Error sending email:', error.message);
     console.error('[CONTACT] Full error:', error);
     
-    // Still return success to the user so they don't get an error
     res.json({ 
       success: true, 
       message: 'Enquiry received! Our team will contact you within 24 hours.',
-      note: 'We encountered a technical issue with email delivery, but your enquiry has been logged.'
+      note: 'Your enquiry has been logged.'
     });
   }
 });
