@@ -82,8 +82,8 @@ app.post('/api/contact/enterprise', async (req, res) => {
     console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
     res.json({ ok: true });
   } catch (err) {
-    console.error('[CONTACT] Failed to send enquiry email:', err.message);
-    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
+    console.error('[CONTACT] Failed to send enquiry email:', err.message, err.code, JSON.stringify(err));
+    res.status(500).json({ error: err.message });
   }
 });
 
