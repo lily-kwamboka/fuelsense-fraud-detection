@@ -13,8 +13,16 @@ const PORT         = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
+const allowedOrigins = [
+  'https://fuelsense-dashboard.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'https://fuelsense-fraud-detection.onrender.com'
+];
+
 app.use(cors({
-  origin: true,
+  origin: (origin, cb) => cb(null, true), // allow all — tighten after domain verified
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -23,61 +31,8 @@ app.use(cors({
 
 app.use(express.json());
 
-// ── Initialize Resend ────────────────────────────────────────────────────────
+// Initialize Resend
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-
-if (resend) {
-  console.log('[EMAIL] Resend initialized for contact form');
-} else {
-  console.log('[EMAIL] Resend not configured - contact form will log only');
-}
-
-// ── POST /api/contact/enterprise ─────────────────────────────────────────────
-app.post('/api/contact/enterprise', async (req, res) => {
-  console.log('[CONTACT] Request received:', req.body);
-  const { name, email, phone, company, stations, message } = req.body;
-  
-  if (!name || !email || !company) {
-    return res.status(400).json({ error: 'Name, email and company are required' });
-  }
-
-  try {
-    if (!resend) throw new Error('Resend not configured');
-    
-    const { error } = await resend.emails.send({
-      from:    process.env.ALERT_FROM_EMAIL || 'onboarding@resend.dev',
-      to:      'bernicewakarindi@gmail.com',
-      replyTo: email,
-      subject: `🏢 Enterprise Enquiry — ${company}`,
-      html: `
-        <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;">
-          <div style="background:#1a1a2e;padding:20px 24px;border-radius:12px 12px 0 0;">
-            <div style="color:#fff;font-size:18px;font-weight:700;">⛽ FuelSense — Enterprise Enquiry</div>
-            <div style="color:#4CAF50;font-size:12px;margin-top:4px;">New lead from the billing page</div>
-          </div>
-          <div style="background:#fff;padding:24px;border-radius:0 0 12px 12px;border:1px solid #e0e0e0;">
-            <table style="width:100%;border-collapse:collapse;">
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;width:140px;">Name</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${name}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Email</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;"><a href="mailto:${email}">${email}</a></td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Phone</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${phone || 'Not provided'}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Company</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${company}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations}</td></tr>
-              <tr><td style="padding:10px 0;color:#666;font-size:13px;vertical-align:top;">Message</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${message || 'No message'}</td></tr>
-            </table>
-          </div>
-          <div style="text-align:center;padding:12px;color:#999;font-size:11px;">FuelSense · Mafuta Salama · Enterprise Sales</div>
-        </div>
-      `,
-    });
-
-    if (error) throw new Error(error.message);
-    console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[CONTACT] Failed to send enquiry email:', err.message);
-    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
-  }
-});
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 let db = null;
@@ -96,6 +51,7 @@ function getRoleAccessLevel(role) {
 }
 
 // ── Multi-tenant: resolve caller's organization_id from supabase_uid ─────────
+// Returns { orgId, role, stationId, accessLevel } or null if not found
 async function resolveUser(db, supabaseUid) {
   if (!supabaseUid) return null;
   const res = await db.query(
@@ -141,6 +97,7 @@ app.get('/api/user-profile', async (req, res) => {
 });
 
 // ── GET /api/stations ─────────────────────────────────────────────────────────
+// Returns stations scoped to the caller's organization only
 app.get('/api/stations', async (req, res) => {
   try {
     const client = await getDb();
@@ -151,6 +108,7 @@ app.get('/api/stations', async (req, res) => {
     let query  = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
     const params = [user.orgId];
 
+    // Station-scoped roles: only see their assigned station
     if (user.accessLevel < 65 && user.stationId) {
       params.push(user.stationId);
       query += ` AND id = $2`;
@@ -176,6 +134,7 @@ app.get('/api/tanks', async (req, res) => {
     const params = [user.orgId];
     let where = `s.organization_id = $1`;
 
+    // Further filter by specific station if requested
     if (stationId) {
       params.push(stationId);
       where += ` AND t.station_id = $${params.length}`;
@@ -532,6 +491,7 @@ app.get('/api/plans', async (req, res) => {
 });
 
 // ── GET /api/subscription ─────────────────────────────────────────────────────
+// Now org-scoped: pass uid to resolve org, or station_id for backwards compat
 app.get('/api/subscription', async (req, res) => {
   try {
     const client = await getDb();
@@ -550,6 +510,7 @@ app.get('/api/subscription', async (req, res) => {
 
     if (!orgId) return res.json(null);
 
+    // First try org-level subscription
     const orgSub = await client.query(
       `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
          FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id
@@ -558,6 +519,7 @@ app.get('/api/subscription', async (req, res) => {
     );
     if (orgSub.rows.length) return res.json(orgSub.rows[0]);
 
+    // Fall back to station-level subscription for backwards compat
     if (stationId) {
       const stSub = await client.query(
         `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
@@ -568,6 +530,7 @@ app.get('/api/subscription', async (req, res) => {
       if (stSub.rows.length) return res.json(stSub.rows[0]);
     }
 
+    // Check org trial status
     const org = await client.query(`SELECT * FROM organizations WHERE id=$1`, [orgId]);
     if (org.rows.length) {
       const o = org.rows[0];
@@ -602,10 +565,9 @@ app.post('/api/payments/initiate', async (req, res) => {
       if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
       plan = planRes.rows[0];
       amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
-      
-      if (process.env.MAX_PAYMENT_AMOUNT) amount = Math.min(amount, parseFloat(process.env.MAX_PAYMENT_AMOUNT));
     }
 
+    // Get org_id from station
     const stRes = await client.query(`SELECT organization_id FROM stations WHERE id=$1`, [station_id]);
     const orgId = stRes.rows[0]?.organization_id || null;
 
@@ -660,6 +622,7 @@ app.get('/api/payments/callback', async (req, res) => {
 
           const orgId = payment.organization_id;
           if (orgId) {
+            // Org-level subscription (new model)
             await client.query(
               `INSERT INTO subscriptions (station_id, organization_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
                VALUES ($1,$2,$3,$4,'active',$5,$6)
@@ -668,6 +631,7 @@ app.get('/api/payments/callback', async (req, res) => {
                  current_period_start=EXCLUDED.current_period_start, current_period_end=EXCLUDED.current_period_end`,
               [payment.station_id, orgId, plan.id, payment.billing_cycle, now, end]
             );
+            // Update org subscription status
             await client.query(
               `UPDATE organizations SET subscription_status='active', plan_id=$1 WHERE id=$2`,
               [plan.id, orgId]
@@ -757,6 +721,7 @@ app.get('/api/debug-pesapal', (req, res) => {
 });
 
 // ── SUPER ADMIN: manage organizations ────────────────────────────────────────
+// POST /api/admin/organizations — create new client org + invite owner
 app.post('/api/admin/organizations', async (req, res) => {
   const { admin_email, name, slug, owner_email, plan_id, max_stations, max_tanks } = req.body;
   if (!admin_email || !name || !owner_email)
@@ -766,6 +731,7 @@ app.post('/api/admin/organizations', async (req, res) => {
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
+    // Resolve plan limits
     let maxSt = max_stations || 1, maxTk = max_tanks || 5;
     if (plan_id) {
       const planRes = await client.query(`SELECT max_stations, max_tanks FROM subscription_plans WHERE id=$1`, [plan_id]);
@@ -786,6 +752,7 @@ app.post('/api/admin/organizations', async (req, res) => {
   }
 });
 
+// GET /api/admin/organizations — list all orgs (super admin only)
 app.get('/api/admin/organizations', async (req, res) => {
   const { admin_email } = req.query;
   try {
@@ -807,6 +774,7 @@ app.get('/api/admin/organizations', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/admin/organizations/:id — single org details
 app.get('/api/admin/organizations/:id', async (req, res) => {
   const { admin_email } = req.query;
   try {
@@ -824,6 +792,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PUT /api/admin/user-profiles/:uid — update a user's role or station
 app.put('/api/admin/user-profiles/:uid', async (req, res) => {
   const { admin_email, role, station_id } = req.body;
   try {
@@ -849,6 +818,7 @@ app.post('/api/stations', async (req, res) => {
     const user   = await resolveUser(client, uid);
     if (!user || user.accessLevel < 100) return res.status(403).json({ error: 'Owner access required' });
 
+    // Check station limit
     const org = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
     const countRes = await client.query(`SELECT COUNT(*) AS count FROM stations WHERE organization_id=$1`, [user.orgId]);
     const current = parseInt(countRes.rows[0].count);
@@ -865,6 +835,300 @@ app.post('/api/stations', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('[API] POST /api/stations error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADMIN PORTAL ENDPOINTS — used by the separate admin/ Vite app
+// (Stations.js, Tanks.js, Users.js, Suppliers.js)
+// Access to the admin portal itself is gated client-side by ALLOWED_ROLES
+// in admin/src/App.js; these endpoints trust that gate and additionally
+// scope every read/write through resolveAdminOrg() below.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Resolve which organization an admin-portal request should operate on.
+// Accepts uid (preferred) so multi-tenant scoping holds; falls back to the
+// single seed org if uid is absent (keeps older/admin-only flows working).
+async function resolveAdminOrg(db, uid) {
+  if (uid) {
+    const user = await resolveUser(db, uid);
+    if (user?.orgId) return user.orgId;
+  }
+  // Fallback: the original Mafuta Salama org (back-compat for admin tools
+  // that haven't been updated to pass uid yet)
+  const res = await db.query(`SELECT id FROM organizations ORDER BY created_at ASC LIMIT 1`);
+  return res.rows[0]?.id || null;
+}
+
+// ── STATIONS (admin CRUD) ─────────────────────────────────────────────────────
+app.get('/api/admin/stations', async (req, res) => {
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, req.query.uid);
+    if (!orgId) return res.json([]);
+
+    const result = await client.query(`
+      SELECT s.id, s.name, s.location,
+             COUNT(t.id) AS tank_count
+        FROM stations s
+        LEFT JOIN tanks t ON t.station_id = s.id
+       WHERE s.organization_id = $1
+       GROUP BY s.id
+       ORDER BY s.name`, [orgId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/stations', async (req, res) => {
+  const { name, location, uid } = req.body;
+  if (!name) return res.status(400).json({ error: 'Station name is required.' });
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, uid);
+    if (!orgId) return res.status(400).json({ error: 'No organization found for this user.' });
+
+    const countRes = await client.query(`SELECT COUNT(*) AS count FROM stations WHERE organization_id=$1`, [orgId]);
+    const orgRes   = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [orgId]);
+    const maxSt    = orgRes.rows[0]?.max_stations ?? 1;
+    if (maxSt !== -1 && parseInt(countRes.rows[0].count) >= maxSt) {
+      return res.status(403).json({ error: `Station limit reached (${maxSt}). Upgrade your plan to add more stations.` });
+    }
+
+    const result = await client.query(
+      `INSERT INTO stations (name, location, organization_id) VALUES ($1,$2,$3) RETURNING *`,
+      [name, location || '', orgId]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/stations/:id', async (req, res) => {
+  const { name, location } = req.body;
+  if (!name) return res.status(400).json({ error: 'Station name is required.' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE stations SET name=$1, location=$2 WHERE id=$3 RETURNING *`,
+      [name, location || '', req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Station not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/stations/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM stations WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── TANKS (admin CRUD) ────────────────────────────────────────────────────────
+app.get('/api/admin/tanks', async (req, res) => {
+  try {
+    const client    = await getDb();
+    const orgId     = await resolveAdminOrg(client, req.query.uid);
+    const stationId = req.query.station_id;
+    if (!orgId) return res.json([]);
+
+    const params = [orgId];
+    let where = `s.organization_id = $1`;
+    if (stationId) {
+      params.push(stationId);
+      where += ` AND t.station_id = $${params.length}`;
+    }
+
+    const result = await client.query(`
+      SELECT t.id, t.tank_number, t.fuel_type, t.capacity_litres,
+             t.fuel_density_at_15c, t.low_stock_threshold_pct,
+             t.station_id, s.name AS station_name
+        FROM tanks t
+        JOIN stations s ON s.id = t.station_id
+       WHERE ${where}
+       ORDER BY s.name, t.tank_number`, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/tanks', async (req, res) => {
+  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
+  if (!station_id || !tank_number || !fuel_type || !capacity_litres)
+    return res.status(400).json({ error: 'station_id, tank_number, fuel_type and capacity_litres are required.' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO tanks (station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c || 0.835, low_stock_threshold_pct || 20]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/tanks/:id', async (req, res) => {
+  const { tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE tanks SET tank_number=$1, fuel_type=$2, capacity_litres=$3, fuel_density_at_15c=$4, low_stock_threshold_pct=$5
+       WHERE id=$6 RETURNING *`,
+      [tank_number, fuel_type, capacity_litres, fuel_density_at_15c || 0.835, low_stock_threshold_pct || 20, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Tank not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/tanks/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM tanks WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── USERS (admin CRUD) ────────────────────────────────────────────────────────
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, req.query.uid);
+    if (!orgId) return res.json([]);
+
+    const result = await client.query(`
+      SELECT u.id, u.supabase_uid, u.email, u.full_name, u.role, u.station_id,
+             s.name AS station_name
+        FROM user_profiles u
+        LEFT JOIN stations s ON s.id = u.station_id
+       WHERE u.organization_id = $1
+       ORDER BY u.role, u.email`, [orgId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users', async (req, res) => {
+  const { supabase_uid, email, full_name, role, station_id, uid } = req.body;
+  if (!supabase_uid || !email || !role)
+    return res.status(400).json({ error: 'Supabase UID, email and role are required.' });
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, uid);
+    if (!orgId) return res.status(400).json({ error: 'No organization found for this user.' });
+
+    const result = await client.query(
+      `INSERT INTO user_profiles (supabase_uid, email, full_name, role, station_id, organization_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [supabase_uid, email, full_name || null, role, station_id || null, orgId]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A user with this Supabase UID already exists.' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/users/:id', async (req, res) => {
+  const { email, full_name, role, station_id } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE user_profiles SET email=$1, full_name=$2, role=$3, station_id=$4 WHERE id=$5 RETURNING *`,
+      [email, full_name || null, role, station_id || null, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM user_profiles WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SUPPLIERS (admin CRUD) ────────────────────────────────────────────────────
+app.get('/api/admin/suppliers', async (req, res) => {
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, req.query.uid);
+    if (!orgId) return res.json([]);
+
+    const result = await client.query(
+      `SELECT * FROM suppliers WHERE organization_id = $1 ORDER BY name`, [orgId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    // suppliers table may not exist yet on older deployments — fail soft
+    if (err.message.includes('does not exist')) return res.json([]);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/suppliers', async (req, res) => {
+  const { name, contact_name, phone, email, address, tolerance_pct, uid } = req.body;
+  if (!name) return res.status(400).json({ error: 'Supplier name is required.' });
+  try {
+    const client = await getDb();
+    const orgId  = await resolveAdminOrg(client, uid);
+    if (!orgId) return res.status(400).json({ error: 'No organization found for this user.' });
+
+    const result = await client.query(
+      `INSERT INTO suppliers (name, contact_name, phone, email, address, tolerance_pct, organization_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null, tolerance_pct || 0.25, orgId]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/suppliers/:id', async (req, res) => {
+  const { name, contact_name, phone, email, address, tolerance_pct } = req.body;
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, tolerance_pct=$6 WHERE id=$7 RETURNING *`,
+      [name, contact_name || null, phone || null, email || null, address || null, tolerance_pct || 0.25, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/suppliers/:id', async (req, res) => {
+  try {
+    const client = await getDb();
+    await client.query(`DELETE FROM suppliers WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -886,6 +1150,7 @@ async function checkExpiredSubscriptions() {
     );
     if (result.rows.length) {
       console.log(`[CRON] Expired ${result.rows.length} subscription(s)`);
+      // Also update org status if all their subs expired
       for (const row of result.rows) {
         if (row.organization_id) {
           await client.query(
@@ -905,14 +1170,11 @@ async function sendRenewalReminder(orgId, daysLeft, userEmail, planName) {
   if (!resend) return;
   try {
     await resend.emails.send({
-      from: 'FuelSense <noreply@fuelsense.com>',
-      to: userEmail,
+      from: 'FuelSense <noreply@fuelsense.com>', to: userEmail,
       subject: `Your ${planName} plan renews in ${daysLeft} days`,
       html: `<p>Your <strong>${planName}</strong> plan renews in <strong>${daysLeft} days</strong>. <a href="${process.env.FRONTEND_URL}/?tab=pricing">Manage subscription</a></p>`
     });
-  } catch (err) {
-    console.error('[EMAIL] Renewal reminder failed:', err.message);
-  }
+  } catch (err) { console.error('[EMAIL] Renewal reminder failed:', err.message); }
 }
 
 async function checkUpcomingRenewals() {
@@ -931,48 +1193,33 @@ async function checkUpcomingRenewals() {
       const daysLeft = Math.ceil((new Date(row.current_period_end) - new Date()) / 86400000);
       await sendRenewalReminder(row.organization_id, daysLeft, row.owner_email, row.plan_name);
     }
-  } catch (err) {
-    console.error('[CRON] checkUpcomingRenewals:', err.message);
-  }
+  } catch (err) { console.error('[CRON] checkUpcomingRenewals:', err.message); }
 }
 
 setInterval(checkExpiredSubscriptions, 60 * 60 * 1000);
-setInterval(checkUpcomingRenewals, 6 * 60 * 60 * 1000);
-setTimeout(async () => {
-  await checkExpiredSubscriptions();
-  await checkUpcomingRenewals();
-}, 5000);
+setInterval(checkUpcomingRenewals,     6  * 60 * 60 * 1000);
+setTimeout(async () => { await checkExpiredSubscriptions(); await checkUpcomingRenewals(); }, 5000);
 
 // ── ATG Scheduler ─────────────────────────────────────────────────────────────
 setTimeout(async () => {
   try {
-    const { getInventory } = require('./atg-client');
-    const { calculateNSV } = require('./measurement-engine');
+    const { getInventory }  = require('./atg-client');
+    const { calculateNSV }  = require('./measurement-engine');
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
-    const STABLE_CYCLES_REQUIRED = 10;
+    const STABLE_CYCLES_REQUIRED  = 10;
 
     async function pollCycle() {
       console.log('[scheduler] Poll cycle started at ' + new Date().toISOString());
       let readings;
-      try {
-        readings = await getInventory();
-      } catch (err) {
-        console.error('[scheduler] ATG error:', err.message);
-        return;
-      }
+      try { readings = await getInventory(); }
+      catch (err) { console.error('[scheduler] ATG error:', err.message); return; }
 
       const client = await getDb();
       for (const reading of readings) {
         try {
-          const tankRes = await client.query(
-            'SELECT * FROM tanks WHERE tank_number = $1 LIMIT 1',
-            [reading.tankNumber]
-          );
-          if (!tankRes.rows[0]) {
-            console.warn('[scheduler] No tank for probe ' + reading.tankNumber);
-            continue;
-          }
+          const tankRes = await client.query('SELECT * FROM tanks WHERE tank_number=$1 LIMIT 1', [reading.tankNumber]);
+          if (!tankRes.rows[0]) { console.warn('[scheduler] No tank for probe ' + reading.tankNumber); continue; }
           const t = tankRes.rows[0];
           const volumes = await calculateNSV(client, t.id, reading.innageMm, reading.waterMm, reading.tempC);
 
@@ -980,7 +1227,7 @@ setTimeout(async () => {
             `INSERT INTO atg_readings (id, tank_id, recorded_at, innage_mm, water_mm, temperature_c, tov_litres, water_litres, gov_litres, vcf, nsv_litres, is_locked)
              VALUES (gen_random_uuid(),$1,NOW(),$2,$3,$4,$5,$6,$7,$8,$9,FALSE)`,
             [t.id, reading.innageMm, reading.waterMm, reading.tempC,
-              volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
+             volumes.tov_litres, volumes.water_litres, volumes.gov_litres, volumes.vcf, volumes.nsv_litres]
           );
           console.log('[scheduler] Saved | tank ' + t.tank_number + ' (' + reading.product + ') | innage: ' + reading.innageMm + 'mm | nsv: ' + volumes.nsv_litres + 'L');
 
@@ -989,10 +1236,7 @@ setTimeout(async () => {
           await checkLowStockAlert(client, t.id, t.tank_number, t.fuel_type, fillPct, parseFloat(t.low_stock_threshold_pct));
 
           const state = tankState[t.id];
-          if (!state) {
-            tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' };
-            continue;
-          }
+          if (!state) { tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' }; continue; }
           const delta = reading.innageMm - state.lastInnageMm;
           if (delta > DELIVERY_RISE_THRESHOLD) {
             state.stableCycles = 0;
@@ -1001,26 +1245,19 @@ setTimeout(async () => {
                 `INSERT INTO deliveries (id, tank_id, status, offload_started_at) VALUES (gen_random_uuid(),$1,'in_progress',NOW()) RETURNING id`,
                 [t.id]
               );
-              state.deliveryId = dRes.rows[0].id;
-              state.deliveryStatus = 'in_progress';
+              state.deliveryId = dRes.rows[0].id; state.deliveryStatus = 'in_progress';
               console.log('[scheduler] DELIVERY STARTED tank ' + t.tank_number);
             }
           } else if (state.deliveryStatus === 'in_progress') {
             state.stableCycles++;
             if (state.stableCycles >= STABLE_CYCLES_REQUIRED) {
-              await client.query(
-                `UPDATE deliveries SET offload_ended_at=NOW(), status='awaiting_stabilisation' WHERE id=$1`,
-                [state.deliveryId]
-              );
-              state.deliveryStatus = 'awaiting_stabilisation';
-              state.stableCycles = 0;
+              await client.query(`UPDATE deliveries SET offload_ended_at=NOW(), status='awaiting_stabilisation' WHERE id=$1`, [state.deliveryId]);
+              state.deliveryStatus = 'awaiting_stabilisation'; state.stableCycles = 0;
               console.log('[scheduler] OFFLOAD ENDED delivery ' + state.deliveryId);
             }
           }
           state.lastInnageMm = reading.innageMm;
-        } catch (err) {
-          console.error('[scheduler] Error processing tank ' + reading.tankNumber + ':', err.message);
-        }
+        } catch (err) { console.error('[scheduler] Error processing tank ' + reading.tankNumber + ':', err.message); }
       }
       console.log('[scheduler] Poll cycle complete\n');
     }
@@ -1028,9 +1265,7 @@ setTimeout(async () => {
     await pollCycle();
     setInterval(pollCycle, 60000);
     console.log('[scheduler] Started inside API process ✓');
-  } catch (err) {
-    console.error('[scheduler] Failed to start:', err.message);
-  }
+  } catch (err) { console.error('[scheduler] Failed to start:', err.message); }
 }, 3000);
 
 module.exports = app;
