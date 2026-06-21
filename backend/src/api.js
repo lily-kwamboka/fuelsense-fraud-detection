@@ -1181,6 +1181,66 @@ async function checkExpiredSubscriptions() {
     console.error('[API] strapping upload error:', err.message);
     res.status(500).json({ error: err.message });
   }
+};
+
+// ── ALERT CONFIG ROUTES ───────────────────────────────────────────────────
+
+app.get('/api/admin/alert-config/:stationId', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(`SELECT * FROM alert_config WHERE station_id = $1`, [req.params.stationId]);
+    if (!result.rows.length) {
+      return res.json({
+        station_id: req.params.stationId,
+        low_stock_threshold_pct: 20,
+        high_water_mm: 50,
+        reading_gap_minutes: 5,
+        stabilisation_timeout_hours: 14,
+        delivery_variance_tolerance_pct: 0.25,
+        notify_email: '',
+        notify_phone: '',
+        notify_on_low_stock: true,
+        notify_on_high_water: true,
+        notify_on_reading_gap: true,
+        notify_on_delivery_flagged: true,
+      });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] GET alert-config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/alert-config', async (req, res) => {
+  const { station_id, low_stock_threshold_pct, high_water_mm, reading_gap_minutes, stabilisation_timeout_hours, delivery_variance_tolerance_pct, notify_email, notify_phone, notify_on_low_stock, notify_on_high_water, notify_on_reading_gap, notify_on_delivery_flagged } = req.body;
+  if (!station_id) return res.status(400).json({ error: 'station_id is required' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO alert_config (station_id, low_stock_threshold_pct, high_water_mm, reading_gap_minutes, stabilisation_timeout_hours, delivery_variance_tolerance_pct, notify_email, notify_phone, notify_on_low_stock, notify_on_high_water, notify_on_reading_gap, notify_on_delivery_flagged, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+       ON CONFLICT (station_id) DO UPDATE SET
+         low_stock_threshold_pct=EXCLUDED.low_stock_threshold_pct,
+         high_water_mm=EXCLUDED.high_water_mm,
+         reading_gap_minutes=EXCLUDED.reading_gap_minutes,
+         stabilisation_timeout_hours=EXCLUDED.stabilisation_timeout_hours,
+         delivery_variance_tolerance_pct=EXCLUDED.delivery_variance_tolerance_pct,
+         notify_email=EXCLUDED.notify_email,
+         notify_phone=EXCLUDED.notify_phone,
+         notify_on_low_stock=EXCLUDED.notify_on_low_stock,
+         notify_on_high_water=EXCLUDED.notify_on_high_water,
+         notify_on_reading_gap=EXCLUDED.notify_on_reading_gap,
+         notify_on_delivery_flagged=EXCLUDED.notify_on_delivery_flagged,
+         updated_at=NOW()
+       RETURNING *`,
+      [station_id, low_stock_threshold_pct ?? 20, high_water_mm ?? 50, reading_gap_minutes ?? 5, stabilisation_timeout_hours ?? 14, delivery_variance_tolerance_pct ?? 0.25, notify_email || null, notify_phone || null, notify_on_low_stock ?? true, notify_on_high_water ?? true, notify_on_reading_gap ?? true, notify_on_delivery_flagged ?? true]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] POST alert-config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = app;
