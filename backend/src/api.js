@@ -1243,4 +1243,52 @@ app.post('/api/admin/alert-config', async (req, res) => {
   }
 });
 
+// ── RECONCILIATION CONFIG ROUTES ──────────────────────────────────────────
+
+app.get('/api/admin/reconciliation-config/:stationId', async (req, res) => {
+  try {
+    const client = await getDb();
+    const result = await client.query(`SELECT * FROM reconciliation_config WHERE station_id = $1`, [req.params.stationId]);
+    if (!result.rows.length) {
+      return res.json({
+        station_id: req.params.stationId,
+        default_tolerance_pct: 0.25,
+        stabilisation_std_dev_threshold: 0.3,
+        delivery_detection_threshold_mm: 50,
+        atg_polling_interval_seconds: 60,
+        stabilisation_timeout_hours: 14,
+      });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] GET reconciliation-config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/reconciliation-config', async (req, res) => {
+  const { station_id, default_tolerance_pct, stabilisation_std_dev_threshold, delivery_detection_threshold_mm, atg_polling_interval_seconds, stabilisation_timeout_hours } = req.body;
+  if (!station_id) return res.status(400).json({ error: 'station_id is required' });
+  try {
+    const client = await getDb();
+    const result = await client.query(
+      `INSERT INTO reconciliation_config (station_id, default_tolerance_pct, stabilisation_std_dev_threshold, delivery_detection_threshold_mm, atg_polling_interval_seconds, stabilisation_timeout_hours, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW())
+       ON CONFLICT (station_id) DO UPDATE SET
+         default_tolerance_pct=EXCLUDED.default_tolerance_pct,
+         stabilisation_std_dev_threshold=EXCLUDED.stabilisation_std_dev_threshold,
+         delivery_detection_threshold_mm=EXCLUDED.delivery_detection_threshold_mm,
+         atg_polling_interval_seconds=EXCLUDED.atg_polling_interval_seconds,
+         stabilisation_timeout_hours=EXCLUDED.stabilisation_timeout_hours,
+         updated_at=NOW()
+       RETURNING *`,
+      [station_id, default_tolerance_pct ?? 0.25, stabilisation_std_dev_threshold ?? 0.3, delivery_detection_threshold_mm ?? 50, atg_polling_interval_seconds ?? 60, stabilisation_timeout_hours ?? 14]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] POST reconciliation-config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = app;
