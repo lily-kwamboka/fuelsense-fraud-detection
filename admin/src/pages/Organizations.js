@@ -74,7 +74,7 @@ export default function Organizations({ api, session }) {
       if (data.error) { setError(data.error); return; }
       setShowForm(false);
       loadOrgs();
-      alert(`✅ ${data.message}\n\nNext: invite ${form.owner_email} via Supabase Auth → Authentication → Invite User\nThen set their organization_id in user_profiles to:\n${data.organization.id}`);
+      alert(`✅ ${data.message}`);
     } catch (err) {
       setError('Failed to create organization.');
     } finally {
